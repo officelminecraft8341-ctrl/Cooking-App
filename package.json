@@ -2,6 +2,11 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "cd \"Coding for Cooking App\" && npm install && npm run build && node ../build-root.js"
+    "build": "cd \"Coding for Cooking App\" && npm install && npm run build && node ../build-root.js",
+    "deploy": "wrangler deploy",
+    "preview": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^4.111.0"
   }
 }
