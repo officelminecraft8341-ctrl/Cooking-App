@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "scripts": {
+    "build": "cd \"Coding for Cooking App\" && npm install && npm run build"
+  }
+}
