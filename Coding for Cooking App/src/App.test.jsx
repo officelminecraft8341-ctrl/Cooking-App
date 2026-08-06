@@ -19,6 +19,25 @@ describe('ChefAI landing experience', () => {
     expect(screen.getByText(/Premium AI cooking assistant/i)).toBeInTheDocument();
   });
 
+  it('applies accessibility preferences from the accessibility panel', () => {
+    render(
+      <MemoryRouter>
+        <App />
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /open accessibility options/i }));
+    fireEvent.click(screen.getByLabelText(/high contrast/i));
+    fireEvent.click(screen.getByLabelText(/large text/i));
+
+    expect(document.body.classList.contains('accessibility-high-contrast')).toBe(true);
+    expect(document.body.classList.contains('accessibility-large-text')).toBe(true);
+    expect(JSON.parse(localStorage.getItem('chefai-accessibility-settings'))).toMatchObject({
+      highContrast: true,
+      largeText: true,
+    });
+  });
+
   it('lets the user start a conversation with ChefAI', () => {
     render(
       <MemoryRouter>

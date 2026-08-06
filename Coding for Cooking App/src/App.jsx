@@ -8,6 +8,24 @@ import {
   BadgeCheck, TimerReset, Loader2, AlertCircle, Star, Trash2,
 } from 'lucide-react';
 
+const ACCESSIBILITY_STORAGE_KEY = 'chefai-accessibility-settings';
+
+const defaultAccessibilitySettings = {
+  highContrast: false,
+  largeText: false,
+  dyslexiaFont: false,
+  reduceMotion: false,
+  voiceGuidance: false,
+};
+
+const accessibilityOptionLabels = [
+  { key: 'highContrast', label: 'High contrast' },
+  { key: 'largeText', label: 'Large text' },
+  { key: 'dyslexiaFont', label: 'Dyslexia font' },
+  { key: 'reduceMotion', label: 'Reduce motion' },
+  { key: 'voiceGuidance', label: 'Voice guidance' },
+];
+
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const highlights = [
@@ -48,6 +66,7 @@ function App() {
   const [isAccessibilityOpen, setIsAccessibilityOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isRecipeDetailOpen, setIsRecipeDetailOpen] = useState(false);
+  const [accessibilitySettings, setAccessibilitySettings] = useState(defaultAccessibilitySettings);
 
   // Auth
   const [isSignedIn, setIsSignedIn] = useState(false);
@@ -98,6 +117,39 @@ function App() {
       try { setSavedRecipes(JSON.parse(stored)); } catch { /* ignore */ }
     }
   }, []);
+
+  useEffect(() => {
+    const storedSettings = localStorage.getItem(ACCESSIBILITY_STORAGE_KEY);
+    if (storedSettings) {
+      try {
+        const parsed = JSON.parse(storedSettings);
+        setAccessibilitySettings({ ...defaultAccessibilitySettings, ...parsed });
+      } catch { /* ignore */ }
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(ACCESSIBILITY_STORAGE_KEY, JSON.stringify(accessibilitySettings));
+  }, [accessibilitySettings]);
+
+  useEffect(() => {
+    const root = document.body;
+    root.classList.toggle('accessibility-high-contrast', accessibilitySettings.highContrast);
+    root.classList.toggle('accessibility-large-text', accessibilitySettings.largeText);
+    root.classList.toggle('accessibility-dyslexia-font', accessibilitySettings.dyslexiaFont);
+    root.classList.toggle('accessibility-reduce-motion', accessibilitySettings.reduceMotion);
+    root.classList.toggle('accessibility-voice-guidance', accessibilitySettings.voiceGuidance);
+
+    document.documentElement.style.setProperty('--app-font-scale', accessibilitySettings.largeText ? '1.08' : '1');
+    document.documentElement.style.setProperty('--app-motion-scale', accessibilitySettings.reduceMotion ? '0.75' : '1');
+
+    if (accessibilitySettings.voiceGuidance && typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance('Accessibility features are enabled. You can use the recipe generator with voice guidance.');
+      utterance.lang = 'en-US';
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+    }
+  }, [accessibilitySettings]);
 
   useEffect(() => {
     localStorage.setItem('chefai-saved-recipes', JSON.stringify(savedRecipes));
@@ -271,8 +323,14 @@ function App() {
     return ingredient;
   };
 
+  const toggleAccessibilitySetting = (setting) => {
+    setAccessibilitySettings((current) => ({ ...current, [setting]: !current[setting] }));
+  };
+
+  const reduceMotionEnabled = accessibilitySettings.reduceMotion;
+
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(255,122,24,0.16),_transparent_30%),linear-gradient(135deg,#fffdf9_0%,#f8fafc_100%)] text-slate-800">
+    <div className={`min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(255,122,24,0.16),_transparent_30%),linear-gradient(135deg,#fffdf9_0%,#f8fafc_100%)] text-slate-800 ${accessibilitySettings.highContrast ? 'bg-slate-950 text-slate-50' : ''}`}>
       <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
 
         {/* ── Header ─────────────────────────────────────────────────────── */}
@@ -315,10 +373,10 @@ function App() {
                 <p className="mb-3 inline-flex items-center gap-2 rounded-full bg-ember/10 px-3 py-1 text-sm font-medium text-ember">
                   <Sparkles size={16} /> AI-powered culinary guidance
                 </p>
-                <h1 className="text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl">
+                <h1 className={`text-4xl font-semibold tracking-tight ${accessibilitySettings.highContrast ? 'text-white' : 'text-slate-900'} sm:text-5xl`} style={{ fontSize: accessibilitySettings.largeText ? 'clamp(2.5rem, 5vw, 3.5rem)' : undefined, fontFamily: accessibilitySettings.dyslexiaFont ? 'Atkinson Hyperlegible, "Comic Sans MS", "Segoe UI", sans-serif' : undefined }}>
                   Cook beautifully, plan effortlessly.
                 </h1>
-                <p className="mt-4 text-lg text-slate-600">
+                <p className={`mt-4 text-lg ${accessibilitySettings.highContrast ? 'text-slate-200' : 'text-slate-600'}`} style={{ fontSize: accessibilitySettings.largeText ? '1.125rem' : undefined, fontFamily: accessibilitySettings.dyslexiaFont ? 'Atkinson Hyperlegible, "Comic Sans MS", "Segoe UI", sans-serif' : undefined }}>
                   ChefAI turns pantry ingredients, preferences, and time constraints into inspiring recipes — with real nutrition, real instructions, and real cooking guidance.
                 </p>
               </div>
@@ -332,8 +390,8 @@ function App() {
             </div>
 
             {/* Quick input bar */}
-            <div className="mt-8 rounded-[28px] border border-slate-200/80 bg-slate-950/95 p-5 text-white shadow-2xl">
-              <form onSubmit={(e) => { e.preventDefault(); setIsModalOpen(true); }} className="flex items-center gap-3 rounded-[22px] border border-white/10 bg-white/10 px-4 py-3 text-sm text-slate-300">
+            <div className={`mt-8 rounded-[28px] border border-slate-200/80 ${accessibilitySettings.highContrast ? 'bg-slate-900' : 'bg-slate-950/95'} p-5 text-white shadow-2xl`}>
+              <form onSubmit={(e) => { e.preventDefault(); setIsModalOpen(true); }} className="flex items-center gap-3 rounded-[22px] border border-white/10 bg-white/10 px-4 py-3 text-sm text-slate-300" style={{ fontFamily: accessibilitySettings.dyslexiaFont ? 'Atkinson Hyperlegible, "Comic Sans MS", "Segoe UI", sans-serif' : undefined }}>
                 <Search size={16} />
                 <input
                   placeholder="I have chicken, garlic, and lemon — make something Italian…"
@@ -372,14 +430,15 @@ function App() {
                 return (
                   <motion.article
                     key={item.title}
-                    whileHover={{ y: -4, scale: 1.01 }}
-                    className="rounded-[24px] border border-slate-200/80 bg-slate-50/80 p-4"
+                    whileHover={reduceMotionEnabled ? undefined : { y: -4, scale: 1.01 }}
+                    transition={reduceMotionEnabled ? { duration: 0 } : undefined}
+                    className={`rounded-[24px] border border-slate-200/80 ${accessibilitySettings.highContrast ? 'bg-slate-900 text-slate-50' : 'bg-slate-50/80' } p-4`}
                   >
                     <div className="mb-3 inline-flex rounded-2xl bg-white p-2 text-ember shadow-sm">
                       <Icon size={18} />
                     </div>
-                    <h2 className="font-semibold text-slate-900">{item.title}</h2>
-                    <p className="mt-2 text-sm leading-6 text-slate-600">{item.text}</p>
+                    <h2 className={`font-semibold ${accessibilitySettings.highContrast ? 'text-white' : 'text-slate-900'}`}>{item.title}</h2>
+                    <p className={`mt-2 text-sm leading-6 ${accessibilitySettings.highContrast ? 'text-slate-300' : 'text-slate-600'}`}>{item.text}</p>
                   </motion.article>
                 );
               })}
@@ -1192,10 +1251,16 @@ function App() {
               </button>
             </div>
             <div className="mt-4 space-y-3 text-sm text-slate-600">
-              {['High contrast', 'Large text', 'Dyslexia font', 'Reduce motion', 'Voice guidance'].map((option) => (
-                <label key={option} className="flex items-center justify-between rounded-[18px] border border-slate-200 bg-slate-50 px-3 py-2 cursor-pointer hover:border-ember/30 transition">
-                  <span>{option}</span>
-                  <input type="checkbox" className="h-4 w-4 rounded border-slate-300 text-ember focus:ring-ember" />
+              {accessibilityOptionLabels.map((option) => (
+                <label key={option.key} className="flex items-center justify-between rounded-[18px] border border-slate-200 bg-slate-50 px-3 py-2 cursor-pointer hover:border-ember/30 transition">
+                  <span>{option.label}</span>
+                  <input
+                    type="checkbox"
+                    aria-label={option.label}
+                    checked={accessibilitySettings[option.key]}
+                    onChange={() => toggleAccessibilitySetting(option.key)}
+                    className="h-4 w-4 rounded border-slate-300 text-ember focus:ring-ember"
+                  />
                 </label>
               ))}
             </div>
