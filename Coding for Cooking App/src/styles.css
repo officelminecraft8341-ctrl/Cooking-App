@@ -5,12 +5,213 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─── Full themes (BLACK, WHITE, GREY, BLUE, YELLOW, ORANGE, AZUL) ──────────
+   Each accent is a complete theme: surfaces, text, borders, inputs, glass tint.
+   --accent-rgb: primary accent; --accent-strong-rgb: pressed/gradient end;
+   --accent-ink-rgb: text on accent; --theme-ink: normal text;
+   --theme-muted: secondary text; --theme-surface-rgb: card base; */
+:root, [data-accent='orange'] {
+  --accent-rgb: 255 122 24;
+  --accent-strong-rgb: 249 90 12;
+  --accent-ink-rgb: 255 255 255;
+  --theme-ink: #1e293b;
+  --theme-ink-strong: #0f172a;
+  --theme-muted: #64748b;
+  --theme-faint: #94a3b8;
+  --theme-surface-rgb: 255 255 255;
+  --theme-field-rgb: 248 250 252;
+  --theme-border-rgb: 226 232 240;
+  --theme-page-a: #fffdf9;
+  --theme-page-b: #f8fafc;
+  --theme-page-glow: 255 122 24;
+  --glass-tint-rgb: 255 237 224;
+  --theme-shadow-rgb: 154 52 18;
+  --theme-chip-rgb: 255 237 213;
+  --theme-chip-ink: #c2410c;
+  --theme-border-strong-rgb: 253 186 116;
+  --theme-soft-rgb: 255 247 237;
+}
+
+/* Stronger borders + soft hover fills per theme (explicit, no var cycles) */
+[data-accent='black'] {
+  --theme-border-strong-rgb: 71 85 105;
+  --theme-soft-rgb: 30 41 59;
+}
+
+[data-accent='grey'] {
+  --theme-border-strong-rgb: 148 163 184;
+  --theme-soft-rgb: 226 232 240;
+}
+
+/* BLACK — full dark theme */
+[data-accent='black'] {
+  --accent-rgb: 148 163 184;
+  --accent-strong-rgb: 100 116 139;
+  --accent-ink-rgb: 15 23 42;
+  --theme-ink: #e2e8f0;
+  --theme-ink-strong: #f8fafc;
+  --theme-muted: #94a3b8;
+  --theme-faint: #64748b;
+  --theme-surface-rgb: 15 23 42;
+  --theme-field-rgb: 30 41 59;
+  --theme-border-rgb: 51 65 85;
+  --theme-page-a: #0b1120;
+  --theme-page-b: #0f172a;
+  --theme-page-glow: 148 163 184;
+  --glass-tint-rgb: 30 41 59;
+  --theme-shadow-rgb: 2 6 23;
+  --theme-chip-rgb: 51 65 85;
+  --theme-chip-ink: #e2e8f0;
+  --theme-border-strong-rgb: 71 85 105;
+  --theme-soft-rgb: 30 41 59;
+  --accent-rgb: 251 146 60;
+  --accent-strong-rgb: 234 88 12;
+}
+
+/* WHITE — pure light theme */
+[data-accent='white'] {
+  --accent-rgb: 15 23 42;
+  --accent-strong-rgb: 51 65 85;
+  --accent-ink-rgb: 255 255 255;
+  --theme-ink: #334155;
+  --theme-ink-strong: #0f172a;
+  --theme-muted: #64748b;
+  --theme-faint: #94a3b8;
+  --theme-surface-rgb: 255 255 255;
+  --theme-field-rgb: 248 250 252;
+  --theme-border-rgb: 226 232 240;
+  --theme-page-a: #ffffff;
+  --theme-page-b: #f8fafc;
+  --theme-page-glow: 148 163 184;
+  --glass-tint-rgb: 255 255 255;
+  --theme-shadow-rgb: 15 23 42;
+  --theme-chip-rgb: 241 245 249;
+  --theme-chip-ink: #334155;
+  --theme-border-strong-rgb: 203 213 225;
+  --theme-soft-rgb: 241 245 249;
+}
+
+/* GREY — cool graphite theme */
+[data-accent='grey'] {
+  --accent-rgb: 71 85 105;
+  --accent-strong-rgb: 51 65 85;
+  --accent-ink-rgb: 255 255 255;
+  --theme-ink: #334155;
+  --theme-ink-strong: #1e293b;
+  --theme-muted: #64748b;
+  --theme-faint: #94a3b8;
+  --theme-surface-rgb: 248 250 252;
+  --theme-field-rgb: 241 245 249;
+  --theme-border-rgb: 203 213 225;
+  --theme-page-a: #f1f5f9;
+  --theme-page-b: #e2e8f0;
+  --theme-page-glow: 100 116 139;
+  --glass-tint-rgb: 226 232 240;
+  --theme-shadow-rgb: 15 23 42;
+  --theme-chip-rgb: 226 232 240;
+  --theme-chip-ink: #334155;
+  --theme-border-strong-rgb: 148 163 184;
+  --theme-soft-rgb: 226 232 240;
+}
+
+/* BLUE — deep blue theme */
+[data-accent='blue'] {
+  --accent-rgb: 37 99 235;
+  --accent-strong-rgb: 29 78 216;
+  --accent-ink-rgb: 255 255 255;
+  --theme-ink: #1e3a5f;
+  --theme-ink-strong: #172554;
+  --theme-muted: #4b6a8f;
+  --theme-faint: #7c94b3;
+  --theme-surface-rgb: 255 255 255;
+  --theme-field-rgb: 239 244 255;
+  --theme-border-rgb: 191 209 244;
+  --theme-page-a: #eff4ff;
+  --theme-page-b: #dce7ff;
+  --theme-page-glow: 37 99 235;
+  --glass-tint-rgb: 214 228 255;
+  --theme-shadow-rgb: 30 58 138;
+  --theme-chip-rgb: 219 234 254;
+  --theme-chip-ink: #1d4ed8;
+  --theme-border-strong-rgb: 147 197 253;
+  --theme-soft-rgb: 239 246 255;
+}
+
+/* YELLOW — warm golden theme */
+[data-accent='yellow'] {
+  --accent-rgb: 202 138 4;
+  --accent-strong-rgb: 161 98 7;
+  --accent-ink-rgb: 255 251 235;
+  --theme-ink: #45320a;
+  --theme-ink-strong: #422006;
+  --theme-muted: #854d0e;
+  --theme-faint: #b4831f;
+  --theme-surface-rgb: 255 255 255;
+  --theme-field-rgb: 254 249 195;
+  --theme-border-rgb: 253 230 138;
+  --theme-page-a: #fefce8;
+  --theme-page-b: #fdf6b2;
+  --theme-page-glow: 234 179 8;
+  --glass-tint-rgb: 253 244 191;
+  --theme-shadow-rgb: 120 53 15;
+  --theme-chip-rgb: 254 240 138;
+  --theme-chip-ink: #a16207;
+  --theme-border-strong-rgb: 253 224 71;
+  --theme-soft-rgb: 254 252 232;
+}
+
+/* ORANGE — ember theme (default) */
+[data-accent='orange'] {
+  --accent-rgb: 255 122 24;
+  --accent-strong-rgb: 249 90 12;
+  --accent-ink-rgb: 255 255 255;
+  --theme-ink: #431407;
+  --theme-ink-strong: #1c0a02;
+  --theme-muted: #9a3412;
+  --theme-faint: #ea9a63;
+  --theme-surface-rgb: 255 255 255;
+  --theme-field-rgb: 255 247 237;
+  --theme-border-rgb: 251 214 181;
+  --theme-page-a: #fff4e8;
+  --theme-page-b: #ffe8d1;
+  --theme-page-glow: 255 122 24;
+  --glass-tint-rgb: 255 232 209;
+  --theme-shadow-rgb: 154 52 18;
+  --theme-chip-rgb: 255 237 213;
+  --theme-chip-ink: #c2410c;
+  --theme-border-strong-rgb: 253 186 116;
+  --theme-soft-rgb: 255 247 237;
+}
+
+/* AZUL — teal-cyan theme */
+[data-accent='azul'] {
+  --accent-rgb: 13 148 197;
+  --accent-strong-rgb: 2 116 160;
+  --accent-ink-rgb: 255 255 255;
+  --theme-ink: #0c4a5e;
+  --theme-ink-strong: #083344;
+  --theme-muted: #0369a1;
+  --theme-faint: #22a5cc;
+  --theme-surface-rgb: 255 255 255;
+  --theme-field-rgb: 224 246 252;
+  --theme-border-rgb: 165 228 245;
+  --theme-page-a: #e5f7ff;
+  --theme-page-b: #d0edfb;
+  --theme-page-glow: 13 148 197;
+  --glass-tint-rgb: 206 240 252;
+  --theme-shadow-rgb: 14 116 144;
+  --theme-chip-rgb: 207 250 254;
+  --theme-chip-ink: #0e7490;
+  --theme-border-strong-rgb: 103 232 249;
+  --theme-soft-rgb: 236 254 255;
+}
+
 :root {
   font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color: #0f172a;
-  background-color: #fffdf9;
+  color: var(--theme-ink, #1e293b);
+  background-color: var(--theme-page-a, #fffdf9);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -23,40 +224,359 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  background: linear-gradient(135deg, var(--theme-page-a, #fffdf9) 0%, var(--theme-page-b, #f8fafc) 100%);
+  color: var(--theme-ink, #1e293b);
   transition: background-color 180ms ease, color 180ms ease;
 }
 
+/* Inputs and selects follow the theme */
+input,
+select,
+textarea {
+  color: var(--theme-ink, #1e293b);
+  background-color: rgb(var(--theme-field-rgb) / 0.85);
+  border-color: rgb(var(--theme-border-rgb) / 0.9);
+}
+
+input::placeholder {
+  color: var(--theme-faint, #94a3b8);
+}
+
+/* Slate utility overrides so existing classNames re-theme automatically */
+[data-accent] .text-slate-900 { color: var(--theme-ink-strong); }
+[data-accent] .text-slate-800 { color: var(--theme-ink); }
+[data-accent] .text-slate-700 { color: var(--theme-ink); }
+[data-accent] .text-slate-600 { color: var(--theme-muted); }
+[data-accent] .text-slate-500 { color: var(--theme-muted); }
+[data-accent] .text-slate-400 { color: var(--theme-faint); }
+[data-accent] .text-slate-300 { color: var(--theme-faint); }
+[data-accent] .text-slate-200 { color: rgb(var(--theme-border-rgb)); }
+[data-accent] .text-slate-100 { color: rgb(var(--theme-border-rgb) / 0.75); }
+[data-accent] .text-slate-50 { color: rgb(var(--theme-surface-rgb)); }
+[data-accent] .bg-white\/90 { background-color: rgb(var(--theme-surface-rgb) / 0.9); }
+[data-accent] .bg-white\/80 { background-color: rgb(var(--theme-surface-rgb) / 0.8); }
+[data-accent] .bg-white\/70 { background-color: rgb(var(--theme-surface-rgb) / 0.7); }
+[data-accent] .bg-white\/60 { background-color: rgb(var(--theme-surface-rgb) / 0.6); }
+[data-accent] .bg-white\/40 { background-color: rgb(var(--theme-surface-rgb) / 0.4); }
+[data-accent] .bg-white { background-color: rgb(var(--theme-surface-rgb)); }
+[data-accent] .bg-slate-50 { background-color: rgb(var(--theme-field-rgb)); }
+[data-accent] .bg-slate-100 { background-color: rgb(var(--theme-field-rgb)); }
+[data-accent] .bg-slate-50\/80 { background-color: rgb(var(--theme-field-rgb) / 0.8); }
+[data-accent] .bg-slate-50\/50 { background-color: rgb(var(--theme-field-rgb) / 0.5); }
+[data-accent] .border-slate-200 { border-color: rgb(var(--theme-border-rgb)); }
+[data-accent] .border-slate-200\/80 { border-color: rgb(var(--theme-border-rgb) / 0.8); }
+[data-accent] .border-slate-300 { border-color: rgb(var(--theme-border-strong-rgb)); }
+[data-accent] .border-slate-100 { border-color: rgb(var(--theme-border-rgb) / 0.6); }
+[data-accent] .bg-slate-900 { background-color: rgb(var(--theme-ink-strong-rgb, 15 23 42)); }
+[data-accent='black'] .bg-slate-900 { background-color: rgb(51 65 85); }
+[data-accent] .bg-slate-900\/90 { background-color: rgb(var(--theme-ink-strong-rgb, 15 23 42) / 0.92); }
+[data-accent] .bg-slate-950\/70 { background-color: rgb(2 6 23 / 0.72); }
+[data-accent] .bg-slate-950\/50 { background-color: rgb(2 6 23 / 0.55); }
+[data-accent='black'] .bg-slate-950\/70 { background-color: rgb(2 6 23 / 0.82); }
+[data-accent='black'] .bg-slate-950\/50 { background-color: rgb(2 6 23 / 0.65); }
+[data-accent] .hover\:bg-slate-100\/70:hover { background-color: rgb(var(--theme-soft-rgb)); }
+[data-accent='white'] .hover\:bg-slate-100\/70:hover { background-color: #f1f5f9; }
+[data-accent='white'] .bg-slate-50\/80 { background-color: #f8fafc; }
+[data-accent='white'] .bg-slate-50\/50 { background-color: #f8fafc; }
+[data-accent] .bg-slate-800 { background-color: rgb(var(--theme-ink, 30 41 59)); }
+[data-accent] .bg-slate-700 { background-color: rgb(var(--theme-border-strong-rgb, 51 65 85)); }
+[data-accent='black'] .bg-slate-700 { background-color: rgb(30 41 59); }
+[data-accent='black'] .bg-slate-800 { background-color: rgb(15 23 42); }
+[data-accent] .border-slate-600 { border-color: rgb(var(--theme-border-strong-rgb)); }
+[data-accent] .border-slate-500 { border-color: rgb(var(--theme-border-strong-rgb)); }
+[data-accent] .border-slate-900 { border-color: rgb(var(--theme-ink-strong-rgb, 15 23 42)); }
+[data-accent] .hover\:bg-slate-700:hover { background-color: rgb(var(--theme-border-strong-rgb, 51 65 85)); }
+[data-accent='black'] .hover\:bg-slate-700:hover { background-color: rgb(71 85 105); }
+[data-accent] .hover\:bg-slate-100:hover { background-color: rgb(var(--theme-soft-rgb)); }
+[data-accent] .hover\:bg-slate-200:hover { background-color: rgb(var(--theme-border-rgb)); }
+[data-accent] .hover\:bg-slate-800:hover { background-color: rgb(var(--theme-ink)); }
+[data-accent='black'] .hover\:bg-slate-800:hover { background-color: rgb(30 41 59); }
+[data-accent] .hover\:bg-slate-900\/80:hover { background-color: rgb(var(--theme-ink-strong-rgb, 15 23 42) / 0.8); }
+
+/* Translucent-white fills flip solid-tinted on dark themes (dark glass cards, chips) */
+[data-accent='black'] .bg-white\/5 { background-color: rgb(255 255 255 / 0.06); }
+[data-accent='black'] .bg-white\/10 { background-color: rgb(255 255 255 / 0.08); }
+[data-accent='black'] .bg-white\/20 { background-color: rgb(255 255 255 / 0.12); }
+[data-accent='black'] .bg-white\/40 { background-color: rgb(255 255 255 / 0.16); }
+[data-accent='black'] .bg-white\/60 { background-color: rgb(255 255 255 / 0.22); }
+[data-accent='black'] .bg-white\/80 { background-color: rgb(255 255 255 / 0.12); }
+[data-accent='black'] .border-white\/10 { border-color: rgb(255 255 255 / 0.1); }
+[data-accent='black'] .border-white\/20 { border-color: rgb(255 255 255 / 0.14); }
+[data-accent='black'] .border-white\/40 { border-color: rgb(255 255 255 / 0.18); }
+[data-accent='black'] .border-white\/60 { border-color: rgb(255 255 255 / 0.22); }
+[data-accent='black'] .border-white\/70 { border-color: rgb(255 255 255 / 0.24); }
+[data-accent='black'] .text-slate-100 { color: #f1f5f9; }
+[data-accent='black'] .text-slate-200 { color: #e2e8f0; }
+[data-accent='black'] .text-slate-300 { color: #cbd5e1; }
+[data-accent='black'] .text-slate-400 { color: #94a3b8; }
+
+/* Status colors keep their identity but follow the theme's ink weight */
+[data-accent] .text-emerald-800 { color: #047857; }
+[data-accent='black'] .text-emerald-800 { color: #6ee7b7; }
+[data-accent] .text-emerald-700 { color: #059669; }
+[data-accent='black'] .text-emerald-700 { color: #34d399; }
+[data-accent] .text-amber-800 { color: #b45309; }
+[data-accent='black'] .text-amber-800 { color: #fcd34d; }
+[data-accent='black'] .text-amber-700 { color: #fbbf24; }
+[data-accent='black'] .text-amber-500 { color: #fbbf24; }
+[data-accent='black'] .text-amber-400 { color: #fbbf24; }
+[data-accent='black'] .text-red-600 { color: #f87171; }
+[data-accent='black'] .text-red-400 { color: #f87171; }
+[data-accent='black'] .text-red-300 { color: #fca5a5; }
+[data-accent] .text-amber-700 { color: #b45309; }
+[data-accent='black'] .border-red-200 { border-color: rgb(248 113 113 / 0.35); }
+[data-accent] .border-emerald-200 { border-color: rgb(52 211 153 / 0.35); }
+[data-accent] .border-amber-200 { border-color: rgb(251 191 36 / 0.4); }
+[data-accent] .border-red-200 { border-color: #fecaca; }
+[data-accent] .border-emerald-200 { border-color: #a7f3d0; }
+[data-accent] .border-amber-200 { border-color: #fde68a; }
+[data-accent] .bg-red-50 { background-color: rgb(254 242 242 / 0.9); }
+[data-accent] .bg-emerald-50 { background-color: rgb(236 253 245 / 0.9); }
+[data-accent] .bg-amber-50 { background-color: rgb(255 251 235 / 0.9); }
+[data-accent='black'] .bg-red-50 { background-color: rgb(127 29 29 / 0.28); }
+[data-accent='black'] .bg-emerald-50 { background-color: rgb(6 78 59 / 0.32); }
+[data-accent='black'] .bg-amber-50 { background-color: rgb(120 53 15 / 0.3); }
+[data-accent] .text-red-600 { color: #dc2626; }
+[data-accent] .text-red-400 { color: #f87171; }
+[data-accent] .text-red-300 { color: #fca5a5; }
+
+/* Theme-tinted shadows instead of hardcoded slate ones */
+[data-accent] .shadow-soft { box-shadow: 0 20px 60px rgb(var(--theme-shadow-rgb) / 0.18); }
+[data-accent='black'] .shadow-soft { box-shadow: 0 20px 60px rgb(2 6 23 / 0.6); }
+[data-accent] .shadow-glass { box-shadow: 0 24px 70px rgb(var(--theme-shadow-rgb) / 0.22), inset 0 1px 0 rgb(255 255 255 / 0.55); }
+[data-accent='black'] .shadow-glass { box-shadow: 0 24px 70px rgb(2 6 23 / 0.6), inset 0 1px 0 rgb(255 255 255 / 0.14); }
+[data-accent] .shadow-xl { box-shadow: 0 24px 60px rgb(var(--theme-shadow-rgb) / 0.22); }
+[data-accent='black'] .shadow-xl { box-shadow: 0 24px 60px rgb(2 6 23 / 0.62); }
+[data-accent] .shadow-lg { box-shadow: 0 14px 38px rgb(var(--theme-shadow-rgb) / 0.16); }
+[data-accent='black'] .shadow-lg { box-shadow: 0 14px 38px rgb(2 6 23 / 0.55); }
+
+/* Accent-tinted selection + focus ring on everything */
+[data-accent] ::selection { background: rgb(var(--accent-rgb) / 0.3); }
+[data-accent] input:focus,
+[data-accent] select:focus,
+[data-accent] textarea:focus { border-color: rgb(var(--accent-rgb) / 0.65); outline-color: rgb(var(--accent-rgb) / 0.4); }
+
+/* ─── Accessibility modes ──────────────────────────────────────────────
+   Each toggle produces a real, observable change app-wide. */
+
+/* HIGH CONTRAST — overrides every theme variable with pure black/white,
+   kills all translucency, and outlines every interactive control. */
 body.accessibility-high-contrast {
-  background-color: #020617;
-  color: #f8fafc;
+  --theme-page-a: #000000;
+  --theme-page-b: #0a0a0a;
+  --theme-page-glow-rgb: 255 255 255;
+  --theme-surface-rgb: 10 10 10;
+  --theme-field-rgb: 0 0 0;
+  --theme-border-rgb: 255 255 255;
+  --theme-border-strong-rgb: 255 255 255;
+  --theme-ink: #ffffff;
+  --theme-ink-muted: #e2e2e2;
+  --theme-ink-faint: #cccccc;
+  --theme-glass-tint-rgb: 0 0 0;
+  --theme-chip-rgb: 255 255 255;
+  --theme-chip-ink: #000000;
+  --accent-rgb: 255 255 255;
+  background-color: #000000;
+  color: #ffffff;
 }
 
+body.accessibility-high-contrast :is(a, button, input, select, textarea, [role="button"], [role="radio"], [role="switch"], [role="tab"]) {
+  outline: 2px solid #ffffff !important;
+  outline-offset: 2px;
+}
+
+body.accessibility-high-contrast .liquid-glass,
+body.accessibility-high-contrast .dark-glass {
+  background: #0a0a0a !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: 2px solid #ffffff !important;
+  box-shadow: none !important;
+}
+
+/* Keep the switch knob visible against the white ON track */
+body.accessibility-high-contrast [role="switch"] > span {
+  box-shadow: 0 0 0 2px #000000;
+}
+
+body.accessibility-high-contrast [role="switch"] {
+  outline: 2px solid #ffffff !important;
+  outline-offset: 2px;
+}
+
+.accessibility-high-contrast-surface {
+  background-image: none !important;
+  background-color: #000000;
+  color: #ffffff;
+}
+
+/* LARGE TEXT — html font-size is set inline by App (115%); this scales
+   every rem-based Tailwind size (text, padding, radii) with it. */
 body.accessibility-large-text {
-  font-size: calc(1rem * var(--app-font-scale));
+  font-size: 115%;
 }
 
-body.accessibility-dyslexia-font {
-  font-family: 'Atkinson Hyperlegible', 'Comic Sans MS', 'Segoe UI', sans-serif;
+/* DYSLEXIA-FRIENDLY FONT — every element, including form controls which
+   do not inherit font-family by default, plus looser tracking. */
+body.accessibility-dyslexia-font,
+body.accessibility-dyslexia-font :is(button, input, select, textarea, h1, h2, h3, h4, h5, h6, p, span, label, a, li, div) {
+  font-family: 'Atkinson Hyperlegible', 'Comic Sans MS', 'Segoe UI', sans-serif !important;
+  letter-spacing: 0.02em;
+  word-spacing: 0.08em;
 }
 
-body.accessibility-reduce-motion * {
+/* REDUCE MOTION — effectively disables all CSS animation/transitions. */
+body.accessibility-reduce-motion *,
+body.accessibility-reduce-motion *::before,
+body.accessibility-reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
   scroll-behavior: auto !important;
-  animation-duration: calc(0.2s * var(--app-motion-scale)) !important;
-  transition-duration: calc(0.2s * var(--app-motion-scale)) !important;
 }
 
-body.accessibility-voice-guidance a,
-body.accessibility-voice-guidance button,
-body.accessibility-voice-guidance input,
-body.accessibility-voice-guidance [role="button"] {
-  outline: 2px solid transparent;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 * {
   box-sizing: border-box;
 }
 
+/* ─── Liquid glass (iOS-style, graphic-friendly) ─────────────────────────── */
+
+@layer utilities {
+  .liquid-glass {
+    background: linear-gradient(
+      135deg,
+      rgb(var(--glass-tint-rgb) / 0.72) 0%,
+      rgb(var(--theme-surface-rgb) / 0.44) 45%,
+      rgb(var(--glass-tint-rgb) / 0.58) 100%
+    );
+    backdrop-filter: blur(22px) saturate(1.35);
+    -webkit-backdrop-filter: blur(22px) saturate(1.35);
+    border: 1px solid rgb(255 255 255 / 0.55);
+    box-shadow:
+      0 24px 70px rgba(15, 23, 42, 0.14),
+      inset 0 1px 0 rgba(255, 255, 255, 0.65),
+      inset 0 -1px 1px rgba(15, 23, 42, 0.04);
+  }
+
+  [data-accent='black'] .liquid-glass {
+    border-color: rgb(255 255 255 / 0.14);
+    box-shadow:
+      0 24px 70px rgba(2, 6, 23, 0.6),
+      inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  }
+
+  .dark-glass {
+    background: linear-gradient(
+      135deg,
+      rgb(15 23 42 / 0.86) 0%,
+      rgb(30 41 59 / 0.78) 100%
+    );
+    backdrop-filter: blur(22px) saturate(1.3);
+    -webkit-backdrop-filter: blur(22px) saturate(1.3);
+    border: 1px solid rgb(255 255 255 / 0.12);
+    box-shadow:
+      0 24px 70px rgba(2, 6, 23, 0.45),
+      inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  }
+
+  /* ─── Glass OFF: solid, crisp, strong theme colors ──────────────────────
+     Elevated opaque surfaces in the theme's tint, visible borders, real
+     depth via layered shadows — no transparency or blur anywhere. */
+  .glass-off .liquid-glass,
+  body.accessibility-high-contrast .liquid-glass {
+    background: rgb(var(--theme-surface-rgb) / 1);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border: 1px solid rgb(var(--theme-border-strong-rgb, 203 213 225));
+    box-shadow:
+      0 1px 2px rgb(var(--theme-shadow-rgb) / 0.08),
+      0 12px 32px rgb(var(--theme-shadow-rgb) / 0.14);
+  }
+
+  /* Header / rail feel attached to the page rather than floating */
+  .glass-off header.liquid-glass,
+  .glass-off nav.liquid-glass {
+    background: rgb(var(--theme-surface-rgb) / 1);
+    box-shadow:
+      0 1px 0 rgb(var(--theme-border-rgb)),
+      0 8px 24px rgb(var(--theme-shadow-rgb) / 0.08);
+  }
+
+  /* Buttons and chips keep their accent identity with a hairline inner edge */
+  .glass-off .liquid-glass button,
+  .glass-off button.liquid-glass,
+  .glass-off .dark-glass button {
+    border: 1px solid rgb(var(--theme-border-rgb));
+  }
+
+  .glass-off .dark-glass,
+  body.accessibility-high-contrast .dark-glass {
+    background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border: 1px solid #475569;
+    box-shadow: 0 14px 36px rgba(2, 6, 23, 0.45);
+  }
+
+  /* No-blur browsers get the same solid treatment as glass-off */
+  @supports not (backdrop-filter: blur(1px)) {
+    .liquid-glass {
+      background: rgb(var(--theme-surface-rgb) / 1);
+      backdrop-filter: none;
+      border: 1px solid rgb(var(--theme-border-strong-rgb, 203 213 225));
+      box-shadow: 0 12px 32px rgb(var(--theme-shadow-rgb) / 0.14);
+    }
+    .dark-glass {
+      background: #1e293b;
+      backdrop-filter: none;
+    }
+  }
+}
+
 button,
 a {
   cursor: pointer;
+}
+
+/* ─── Accessibility: keyboard focus ring everywhere ─────────────────── */
+:focus-visible {
+  outline: 2px solid rgb(var(--accent-rgb, 255 122 24) / 0.9);
+  outline-offset: 2px;
+}
+
+/* Skip link: hidden until keyboard-focused */
+.skip-link {
+  position: absolute;
+  top: -48px;
+  left: 12px;
+  z-index: 100;
+  border-radius: 9999px;
+  background: #0f172a;
+  color: #ffffff;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: top 120ms ease;
+}
+.skip-link:focus {
+  top: 12px;
+}
+
+/* bump the faintest utility greys so body text meets 4.5:1 on light themes */
+.text-slate-400 {
+  color: #64748b;
+}
+.text-slate-500 {
+  color: #576372;
 }

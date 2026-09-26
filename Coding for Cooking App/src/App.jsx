@@ -1,17 +1,36 @@
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { apiRequest } from './apiClient';
+import { apiRequest, authSignUp, authLogin, authLogout, authMe, readStoredAuth } from './apiClient';
 import {
   ChefHat, Accessibility, Bell, X, Sparkles, BookOpen, Bot,
   Plus, Heart, Layers3, BadgeCheck, TimerReset, Flame, BookmarkPlus,
+  Palette, Check, Move, ArrowRight, Video, Newspaper, LogOut, UserRound, Loader2, Trash2,
 } from 'lucide-react';
+import LegalDocs from './LegalDocs';
+import { ConsentBanner, ConsentCheckbox, readStoredConsent } from './Consent';
+
+// AI-generated nutrition values are estimates — shown wherever nutrition renders
 import HomeView from './views/HomeView';
 import GeneratorView from './views/GeneratorView';
 import SavedView from './views/SavedView';
 import ChatView from './views/ChatView';
 
 const ACCESSIBILITY_STORAGE_KEY = 'chefai-accessibility-settings';
+const APPEARANCE_STORAGE_KEY = 'chefai-appearance-settings';
+
+// BLACK, WHITE, GREY, BLUE, YELLOW, ORANGE, AZUL
+const ACCENT_THEMES = [
+  { id: 'black', label: 'Black', swatch: '#18181b' },
+  { id: 'white', label: 'White', swatch: '#ffffff' },
+  { id: 'grey', label: 'Grey', swatch: '#64748b' },
+  { id: 'blue', label: 'Blue', swatch: '#2563eb' },
+  { id: 'yellow', label: 'Yellow', swatch: '#eab308' },
+  { id: 'orange', label: 'Orange', swatch: '#ff7a18' },
+  { id: 'azul', label: 'Azul', swatch: '#0d94c5' },
+];
+
+const defaultAppearance = { accent: 'orange', liquidGlass: true };
 
 const defaultAccessibilitySettings = {
   highContrast: false,
@@ -22,11 +41,11 @@ const defaultAccessibilitySettings = {
 };
 
 const accessibilityOptionLabels = [
-  { key: 'highContrast', label: 'High contrast' },
-  { key: 'largeText', label: 'Large text' },
-  { key: 'dyslexiaFont', label: 'Dyslexia font' },
-  { key: 'reduceMotion', label: 'Reduce motion' },
-  { key: 'voiceGuidance', label: 'Voice guidance' },
+  { key: 'highContrast', label: 'High contrast', description: 'Pure black & white, no glass or translucency, strong outlines on every control.' },
+  { key: 'largeText', label: 'Large text', description: 'Scales all text, spacing, and controls up 15%.' },
+  { key: 'dyslexiaFont', label: 'Dyslexia-friendly font', description: 'Atkinson Hyperlegible with wider letter & word spacing.' },
+  { key: 'reduceMotion', label: 'Reduce motion', description: 'Disables animations, transitions, and sliding view changes.' },
+  { key: 'voiceGuidance', label: 'Voice guidance', description: 'Reads view changes, saves, and errors aloud.' },
 ];
 
 // ─── View definitions ─────────────────────────────────────────────────────────
@@ -36,28 +55,28 @@ const VIEWS = [
     id: 'home',
     label: 'Home',
     icon: Sparkles,
-    accent: 'from-ember to-orange-400',
+    accent: 'bg-accent-strong',
     description: 'Welcome and quick start',
   },
   {
     id: 'generate',
     label: 'Generate',
     icon: Plus,
-    accent: 'from-ember to-amber-400',
+    accent: 'bg-ember',
     description: 'AI recipe studio',
   },
   {
     id: 'saved',
     label: 'Saved',
     icon: Heart,
-    accent: 'from-emerald to-teal-400',
+    accent: 'bg-accent-strong',
     description: 'Your recipe collection',
   },
   {
     id: 'chat',
     label: 'Chat',
     icon: Bot,
-    accent: 'from-ember to-rose-400',
+    accent: 'bg-ember',
     description: 'ChefAI conversation',
   },
 ];
@@ -84,11 +103,23 @@ function App() {
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isRecipeDetailOpen, setIsRecipeDetailOpen] = useState(false);
   const [accessibilitySettings, setAccessibilitySettings] = useState(defaultAccessibilitySettings);
+  const [appearance, setAppearance] = useState(defaultAppearance);
+  const [autoSaveNotice, setAutoSaveNotice] = useState('');
+  const [isWindowDragArmed, setIsWindowDragArmed] = useState(false);
 
-  // Auth
-  const [isSignedIn, setIsSignedIn] = useState(false);
+  // Auth — real accounts via /api/auth/*, session persisted in localStorage
+  const [authUser, setAuthUser] = useState(null);
+  const [authMode, setAuthMode] = useState('signin'); // 'signin' | 'signup'
+  const [authName, setAuthName] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [isAuthBusy, setIsAuthBusy] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [signupConsent, setSignupConsent] = useState(false);
+
+  // Legal + consent
+  const [activeDoc, setActiveDoc] = useState(null); // null | 'privacy' | 'terms' | 'cookies' | 'refund'
+  const [consent, setConsent] = useState(() => readStoredConsent());
 
   // Recipes
   const [activeRecipe, setActiveRecipe] = useState(null);
@@ -99,6 +130,8 @@ function App() {
 
   // Recipe generator form
   const [genIngredients, setGenIngredients] = useState('');
+  const [genImage, setGenImage] = useState(null); // data URL — photo of a dish to auto-find
+  const [isFindingFromImage, setIsFindingFromImage] = useState(false);
   const [genCuisines, setGenCuisines] = useState([]);
   const [fusionModeActive, setFusionModeActive] = useState(false);
   const [customCuisineInput, setCustomCuisineInput] = useState('');
@@ -112,6 +145,9 @@ function App() {
   const [customAccessibilityInput, setCustomAccessibilityInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [genError, setGenError] = useState('');
+  const [recipeIdeas, setRecipeIdeas] = useState(null);
+  const [pendingGenRequest, setPendingGenRequest] = useState(null);
+  const [isSelectingIdea, setIsSelectingIdea] = useState(false);
 
   // Chat
   const [chatInput, setChatInput] = useState('');
@@ -125,13 +161,34 @@ function App() {
   ]);
   const chatBottomRef = useRef(null);
 
-  // ── URL sync for the active view ──────────────────────────────────────────
+  // Voice guidance + screen-reader announcements: every meaningful change is
+  // pushed to a polite aria-live region AND spoken aloud when voiceGuidance is on.
+  const [liveAnnouncement, setLiveAnnouncement] = useState('');
+  const liveSeq = useRef(0);
+  const accessibilityRef = useRef(accessibilitySettings);
+  accessibilityRef.current = accessibilitySettings;
+
+  const announce = useCallback((text) => {
+    liveSeq.current += 1;
+    setLiveAnnouncement(`${text}`);
+    if (accessibilityRef.current.voiceGuidance && typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'en-US';
+      utterance.rate = 1.05;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+    }
+  }, []);
+
+  // ── View sync for the active view ──────────────────────────────────────
   const navigateToView = useCallback((viewId) => {
     if (!isValidViewId(viewId)) return;
     setSwipeDirection(VIEW_IDS.indexOf(viewId) - VIEW_IDS.indexOf(activeView));
     setActiveView(viewId);
     setSearchParams(viewId === 'home' ? {} : { view: viewId }, { replace: false });
-  }, [activeView, setSearchParams]);
+    const viewDef = VIEWS.find((view) => view.id === viewId);
+    if (viewDef) announce(`${viewDef.label} view. ${viewDef.description}.`);
+  }, [activeView, setSearchParams, announce]);
 
   useEffect(() => {
     if (requestedView && isValidViewId(requestedView) && requestedView !== activeView) {
@@ -170,8 +227,19 @@ function App() {
   }, [isAnyModalOpen, shiftView]);
 
   useEffect(() => {
-    setIsAnyModalOpen(isAccessibilityOpen || isAuthOpen || isRecipeDetailOpen);
-  }, [isAccessibilityOpen, isAuthOpen, isRecipeDetailOpen]);
+    setIsAnyModalOpen(isAccessibilityOpen || isAuthOpen || isRecipeDetailOpen || Boolean(recipeIdeas));
+  }, [isAccessibilityOpen, isAuthOpen, isRecipeDetailOpen, recipeIdeas]);
+
+  // Esc dismisses the ideas overlay
+  useEffect(() => {
+    if (!recipeIdeas) return undefined;
+    const onKey = (event) => {
+      if (event.key === 'Escape') handleDismissIdeas();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recipeIdeas]);
 
   // ── Persist saved recipes to localStorage ─────────────────────────────────
   useEffect(() => {
@@ -179,6 +247,28 @@ function App() {
     if (stored) {
       try { setSavedRecipes(JSON.parse(stored)); } catch { /* ignore */ }
     }
+  }, []);
+
+  // Hydrate from the server too — localStorage can be lost, the store survives
+  useEffect(() => {
+    let cancelled = false;
+    apiRequest('/recipes').then((recipes) => {
+      if (cancelled || !Array.isArray(recipes)) return;
+      setSavedRecipes((current) => {
+        const byTitle = new Map(current.map((r) => [r.title, r]));
+        recipes.forEach((r) => { if (r?.title && !byTitle.has(r.title)) byTitle.set(r.title, r); });
+        return Array.from(byTitle.values());
+      });
+    }).catch(() => { /* offline — localStorage is the fallback */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Restore a signed-in session from localStorage and re-validate the token
+  useEffect(() => {
+    const stored = readStoredAuth();
+    if (!stored) return;
+    setAuthUser(stored.user);
+    authMe().then((user) => setAuthUser(user)).catch(() => setAuthUser(null)); // token expired → drop
   }, []);
 
   useEffect(() => {
@@ -195,22 +285,40 @@ function App() {
     localStorage.setItem(ACCESSIBILITY_STORAGE_KEY, JSON.stringify(accessibilitySettings));
   }, [accessibilitySettings]);
 
+  // ── Appearance (accent theme + liquid glass) ──────────────────────────
+  useEffect(() => {
+    const stored = localStorage.getItem(APPEARANCE_STORAGE_KEY);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (parsed?.accent) setAppearance({ ...defaultAppearance, ...parsed });
+      } catch { /* ignore */ }
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(appearance));
+    document.documentElement.setAttribute('data-accent', appearance.accent);
+    document.body.classList.toggle('glass-off', !appearance.liquidGlass);
+  }, [appearance]);
+
   useEffect(() => {
     const root = document.body;
     root.classList.toggle('accessibility-high-contrast', accessibilitySettings.highContrast);
     root.classList.toggle('accessibility-large-text', accessibilitySettings.largeText);
     root.classList.toggle('accessibility-dyslexia-font', accessibilitySettings.dyslexiaFont);
     root.classList.toggle('accessibility-reduce-motion', accessibilitySettings.reduceMotion);
-    root.classList.toggle('accessibility-voice-guidance', accessibilitySettings.voiceGuidance);
 
-    document.documentElement.style.setProperty('--app-font-scale', accessibilitySettings.largeText ? '1.08' : '1');
-    document.documentElement.style.setProperty('--app-motion-scale', accessibilitySettings.reduceMotion ? '0.75' : '1');
+    // Font scale lives on <html> so every rem-based Tailwind size follows.
+    document.documentElement.style.fontSize = accessibilitySettings.largeText ? '115%' : '';
 
     if (accessibilitySettings.voiceGuidance && typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      const utterance = new SpeechSynthesisUtterance('Accessibility features are enabled. You can use the recipe generator with voice guidance.');
+      const utterance = new SpeechSynthesisUtterance('Voice guidance on. I will read out view changes, saves, and errors.');
       utterance.lang = 'en-US';
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(utterance);
+    } else if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
     }
   }, [accessibilitySettings]);
 
@@ -218,41 +326,154 @@ function App() {
     localStorage.setItem('chefai-saved-recipes', JSON.stringify(savedRecipes));
   }, [savedRecipes]);
 
+  // Toast auto-dismiss
+  useEffect(() => {
+    if (!autoSaveNotice) return undefined;
+    const timer = setTimeout(() => setAutoSaveNotice(''), 2600);
+    return () => clearTimeout(timer);
+  }, [autoSaveNotice]);
+
+  // Release the window drag handle when the pointer comes up anywhere
+  useEffect(() => {
+    if (!isWindowDragArmed) return undefined;
+    const release = () => setIsWindowDragArmed(false);
+    window.addEventListener('pointerup', release);
+    return () => window.removeEventListener('pointerup', release);
+  }, [isWindowDragArmed]);
+
+  // Clicking outside the recipe window closes it (and auto-saves the draft)
+  useEffect(() => {
+    if (!isRecipeDetailOpen) return undefined;
+    const handlePointerDown = (event) => {
+      if (event.target instanceof Element && event.target.closest('[role="dialog"]')) return;
+      handleCloseRecipeWindow();
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRecipeDetailOpen, detailRecipe, savedRecipes]);
+
   useEffect(() => {
     if (chatBottomRef.current && typeof chatBottomRef.current.scrollIntoView === 'function') {
       chatBottomRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages]);
 
-  // ── Recipe Generation ─────────────────────────────────────────────────────
-  const handleGenerateRecipe = async (event) => {
-    event.preventDefault();
+  // ── Recipe Generation (two-step: ideas → chosen recipe) ────────────────────
+  const resetGeneratorForm = () => {
+    setGenIngredients('');
+    setGenCuisines([]);
+    setCustomCuisines([]);
+    setCustomCuisineInput('');
+    setGenDiet('');
+    setGenTime('');
+    setGenServings('2');
+    setGenDifficulty('Any');
+    setGenStrictMode(false);
+    setGenAccessibility('');
+    setCustomAccessibilityInput('');
+    setGenImage(null);
+  };
+
+  const buildGenRequest = () => {
     const finalCuisines = fusionModeActive
       ? [...genCuisines, ...customCuisines]
       : [genCuisines[0] === 'Custom' ? customCuisineInput : (genCuisines[0] || '')];
-
     const finalAccessibility = genAccessibility === 'Custom' ? customAccessibilityInput : genAccessibility;
+    return {
+      ingredients: genIngredients.split(',').map((s) => s.trim()).filter(Boolean),
+      cuisines: finalCuisines.filter(Boolean),
+      diet: genDiet,
+      time: genTime,
+      servings: parseInt(genServings, 10) || 2,
+      difficulty: genDifficulty,
+      strictMode: genStrictMode,
+      accessibility: finalAccessibility,
+    };
+  };
 
-    if (!genIngredients.trim() && finalCuisines.filter(Boolean).length === 0 && !genDiet) {
-      setGenError('Please describe what you have or what you want to cook.');
+  const handleGenerateRecipe = async (event) => {
+    event.preventDefault();
+    const request = buildGenRequest();
+
+    if (!request.ingredients.length && request.cuisines.filter(Boolean).length === 0 && !request.diet && !genImage) {
+      setGenError('Please describe what you have, what you want to cook, or add a photo.');
+      announce('Please describe what you have, what you want to cook, or add a photo.');
       return;
     }
 
     setIsGenerating(true);
+    setGenError('');
+    setRecipeIdeas(null);
+
+    try {
+      // Step 1: brainstorm 3 concepts across a complexity range
+      const data = await apiRequest('/recipes/ideas', {
+        method: 'POST',
+        body: {
+          ingredients: request.ingredients,
+          cuisines: request.cuisines,
+          diet: request.diet,
+          time: request.time,
+          servings: request.servings,
+        },
+      });
+
+      if (!Array.isArray(data.ideas) || data.ideas.length === 0) {
+        throw new Error(data.error || 'Failed to brainstorm ideas');
+      }
+
+      setPendingGenRequest(request);
+      setRecipeIdeas(data.ideas); // full-window overlay shows via recipeIdeas
+      announce(`${data.ideas.length} recipe ideas ready. Choose one to customize.`);
+    } catch (error) {
+      setGenError(error.message || 'Something went wrong. Please try again.');
+      announce(error.message || 'Generating ideas failed. Please try again.');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // Photo → auto-find: identify the dish in the picture and generate its recipe,
+  // honoring whatever constraints (diet, time, servings…) are set on the form.
+  const handleFindFromImage = async () => {
+    if (!genImage || isFindingFromImage) return;
+    setIsFindingFromImage(true);
+    setGenError('');
+    setRecipeIdeas(null);
+
+    try {
+      const request = buildGenRequest();
+      const data = await apiRequest('/recipes/generate', {
+        method: 'POST',
+        body: { ...request, imageIngredients: { images: [genImage] } },
+      });
+      if (!data.recipe) throw new Error(data.error || 'Could not find a recipe from that photo');
+
+      resetGeneratorForm();
+      setActiveRecipe(data.recipe);
+      setDetailRecipe(data.recipe);
+      announce(`Recipe found from your photo: ${data.recipe.title}.`);
+      setIsRecipeDetailOpen(true);
+    } catch (error) {
+      setGenError(error.message || 'Could not find a recipe from that photo. Try a clearer shot.');
+      announce(error.message || 'Could not find a recipe from that photo.');
+    } finally {
+      setIsFindingFromImage(false);
+    }
+  };
+
+  const handleSelectIdea = async (idea) => {
+    if (!pendingGenRequest) return;
+    setIsSelectingIdea(true);
     setGenError('');
 
     try {
       const data = await apiRequest('/recipes/generate', {
         method: 'POST',
         body: {
-          ingredients: genIngredients.split(',').map((s) => s.trim()).filter(Boolean),
-          cuisines: finalCuisines.filter(Boolean),
-          diet: genDiet,
-          time: genTime,
-          servings: parseInt(genServings, 10) || 2,
-          difficulty: genDifficulty,
-          strictMode: genStrictMode,
-          accessibility: finalAccessibility,
+          ...pendingGenRequest,
+          idea: { ideaId: idea.id, ideaTitle: idea.title, ideaComplexity: idea.complexity, ideaTwist: idea.keyTwist },
         },
       });
 
@@ -260,25 +481,24 @@ function App() {
         throw new Error(data.error || 'Failed to generate recipe');
       }
 
+      setRecipeIdeas(null);
+      setPendingGenRequest(null);
+      resetGeneratorForm();
       setActiveRecipe(data.recipe);
-
-      // Reset form
-      setGenIngredients('');
-      setGenCuisines([]);
-      setCustomCuisines([]);
-      setCustomCuisineInput('');
-      setGenDiet('');
-      setGenTime('');
-      setGenServings('2');
-      setGenDifficulty('Any');
-      setGenStrictMode(false);
-      setGenAccessibility('');
-      setCustomAccessibilityInput('');
+      setDetailRecipe(data.recipe);
+      setIsRecipeDetailOpen(true); // Full-window recipe with tutorial links
+      announce(`Your recipe is ready: ${data.recipe.title}.`);
     } catch (error) {
       setGenError(error.message || 'Something went wrong. Please try again.');
+      announce(error.message || 'Generating the recipe failed. Please try again.');
     } finally {
-      setIsGenerating(false);
+      setIsSelectingIdea(false);
     }
+  };
+
+  const handleDismissIdeas = () => {
+    setRecipeIdeas(null);
+    setPendingGenRequest(null);
   };
 
   const handleModifyRecipe = async (action, target, message = '') => {
@@ -296,6 +516,7 @@ function App() {
       if (!data.recipe) throw new Error(data.error || 'Failed to modify recipe');
 
       setActiveRecipe(data.recipe);
+      setDetailRecipe(data.recipe); // Keep the open floating window in sync
     } catch (error) {
       alert(error.message || 'Something went wrong.');
     } finally {
@@ -340,12 +561,26 @@ function App() {
     setIsRecipeDetailOpen(true);
   };
 
-  // ── Chat ──────────────────────────────────────────────────────────────────
-  const handleSendMessage = async (event) => {
-    event.preventDefault();
-    if (!chatInput.trim()) return;
+  // ── Recipe window: auto-save the draft when the user clicks out ──────
+  // Dedupe via savedRecipes means already-saved recipes are never double-saved.
+  const handleCloseRecipeWindow = () => {
+    setIsRecipeDetailOpen(false);
+    if (detailRecipe && !savedRecipes.some((r) => r.title === detailRecipe.title)) {
+      handleSaveRecipe(detailRecipe);
+      setAutoSaveNotice(detailRecipe.title);
+      announce(`Auto-saved ${detailRecipe.title} to your recipes.`);
+    }
+  };
 
-    const message = chatInput.trim();
+  const setAccent = (accent) => setAppearance((current) => ({ ...current, accent }));
+  const toggleLiquidGlass = () => setAppearance((current) => ({ ...current, liquidGlass: !current.liquidGlass }));
+
+  // ── Chat ──────────────────────────────────────────────────────────────────
+  const handleSendMessage = async (event, images = []) => {
+    event.preventDefault();
+    if (!chatInput.trim() && images.length === 0) return;
+
+    const message = chatInput.trim() || (images.length > 0 ? 'What is in this photo / what can I make with it?' : '');
     const updatedHistory = [...messages, { role: 'user', content: message }];
     setMessages(updatedHistory);
     setChatInput('');
@@ -357,12 +592,27 @@ function App() {
         method: 'POST',
         body: {
           message,
+          images, // data URLs — chef can see photos of ingredients or dishes
           history: messages, // full history for context
           recipe: activeRecipe, // current recipe context
+          savedRecipes, // lets the chef switch context to any saved recipe
         },
       });
 
-      setMessages((current) => [...current, { role: 'assistant', content: data.reply }]);
+      let reply = data.reply || '';
+
+      // The chef can switch the active recipe context on request
+      const switchMatch = reply.match(/\[SWITCH_RECIPE:\s*([^\]]+)\]\s*$/);
+      if (switchMatch) {
+        reply = reply.replace(/\[SWITCH_RECIPE:\s*[^\]]+\]\s*$/, '').trim();
+        const target = savedRecipes.find((r) => r.title.toLowerCase() === switchMatch[1].trim().toLowerCase());
+        if (target) {
+          setActiveRecipe(target);
+          reply += `\n\n→ Switched context to “${target.title}”.`;
+        }
+      }
+
+      setMessages((current) => [...current, { role: 'assistant', content: reply }]);
     } catch (error) {
       setChatError('ChefAI is temporarily unavailable. Please try again.');
     } finally {
@@ -370,25 +620,96 @@ function App() {
     }
   };
 
+  // Switch the chat's recipe context directly from the Chat view
+  const handleSwitchChatRecipe = (recipe) => {
+    if (!recipe) return;
+    setActiveRecipe(recipe);
+    setMessages((current) => [
+      ...current,
+      { role: 'assistant', content: `Switched context to “${recipe.title}”. Ask me anything about it — substitutions, timing, scaling.` },
+    ]);
+  };
+
   // ── Auth ──────────────────────────────────────────────────────────────────
-  const handleSignIn = (event) => {
+  const handleAuthSubmit = async (event) => {
     event.preventDefault();
-    if (email && password) {
-      setIsSignedIn(true);
+    if (!email.trim() || !password || isAuthBusy) return;
+    if (authMode === 'signup' && !signupConsent) {
+      setAuthError('Please agree to the Terms & Privacy Policy to create an account.');
+      return;
+    }
+
+    setIsAuthBusy(true);
+    setAuthError('');
+    try {
+      const user = authMode === 'signup'
+        ? await authSignUp({ email: email.trim(), password, name: authName.trim() })
+        : await authLogin({ email: email.trim(), password });
+      setAuthUser(user);
+      setPassword('');
+      setAuthName('');
+      setSignupConsent(false);
       setIsAuthOpen(false);
       setMessages((current) => [
         ...current,
-        { role: 'assistant', content: `Welcome back! Ready to cook something great today?` },
+        { role: 'assistant', content: `Welcome${authMode === 'signup' ? '' : ' back'}, ${user.name}! Ready to cook something great today?` },
       ]);
+    } catch (error) {
+      setAuthError(error.message || 'Could not sign you in. Please try again.');
+    } finally {
+      setIsAuthBusy(false);
     }
   };
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
-  const toggleAccessibilitySetting = (setting) => {
-    setAccessibilitySettings((current) => ({ ...current, [setting]: !current[setting] }));
+  const handleSignOut = async () => {
+    await authLogout();
+    setAuthUser(null);
+    setIsAuthOpen(false);
+    setMessages((current) => [
+      ...current,
+      { role: 'assistant', content: 'Signed out. Your saved recipes are waiting for you next time!' },
+    ]);
   };
 
+  const openAuth = (mode) => {
+    setAuthMode(mode);
+    setAuthError('');
+    setSignupConsent(false);
+    setIsAuthOpen(true);
+  };
+
+  // Delete account: erases the user, their sessions, and all saved recipes
+  const handleDeleteAccount = async () => {
+    if (!window.confirm('Delete your account? This erases your profile and ALL saved recipes immediately and cannot be undone.')) return;
+    try {
+      await apiRequest('/auth/account', { method: 'DELETE' });
+      setAuthUser(null);
+      setSavedRecipes([]);
+      setIsAuthOpen(false);
+      announce('Your account and all saved recipes have been deleted.');
+    } catch {
+      window.alert('Could not delete your account. Please try again.');
+    }
+  };
+
+  // ── Helpers ───────────────────────────────────────────────────────────
   const reduceMotionEnabled = accessibilitySettings.reduceMotion;
+
+  const toggleAccessibilitySetting = (setting) => {
+    const next = { ...accessibilitySettings, [setting]: !accessibilitySettings[setting] };
+    setAccessibilitySettings(next);
+    const option = accessibilityOptionLabels.find((item) => item.key === setting);
+    if (option) {
+      const state = next[setting] ? 'on' : 'off';
+      setLiveAnnouncement(`${option.label} ${state}`);
+      if (next.voiceGuidance && typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        const utterance = new SpeechSynthesisUtterance(`${option.label} ${state}`);
+        utterance.lang = 'en-US';
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(utterance);
+      }
+    }
+  };
 
   const generatorForm = useMemo(() => ({
     genIngredients, setGenIngredients,
@@ -403,7 +724,10 @@ function App() {
     genStrictMode, setGenStrictMode,
     genAccessibility, setGenAccessibility,
     customAccessibilityInput, setCustomAccessibilityInput,
-  }), [genIngredients, genCuisines, fusionModeActive, customCuisineInput, customCuisines, genDiet, genTime, genServings, genDifficulty, genStrictMode, genAccessibility, customAccessibilityInput]);
+    genImage, setGenImage,
+    isFindingFromImage,
+    onFindFromImage: handleFindFromImage,
+  }), [genIngredients, genCuisines, fusionModeActive, customCuisineInput, customCuisines, genDiet, genTime, genServings, genDifficulty, genStrictMode, genAccessibility, customAccessibilityInput, genImage, isFindingFromImage]);
 
   const highContrast = accessibilitySettings.highContrast;
   const dyslexiaStyle = accessibilitySettings.dyslexiaFont
@@ -413,18 +737,24 @@ function App() {
   const activeIndex = VIEW_IDS.indexOf(activeView);
 
   return (
+    <MotionConfig reducedMotion={reduceMotionEnabled ? 'always' : 'user'}>
     <div
-      className={`flex h-screen flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(255,122,24,0.16),_transparent_30%),linear-gradient(135deg,#fffdf9_0%,#f8fafc_100%)] text-slate-800 ${highContrast ? 'bg-slate-950 text-slate-50' : ''}`}
+      role="application"
+      aria-roledescription="ChefAI cooking assistant"
+      className={`flex h-screen flex-col overflow-hidden text-slate-800 ${highContrast ? 'accessibility-high-contrast-surface' : ''}`} style={{ backgroundImage: `radial-gradient(circle at top left, rgb(var(--theme-page-glow, 255 122 24) / 0.16), transparent 30%), linear-gradient(135deg, var(--theme-page-a, #fffdf9) 0%, var(--theme-page-b, #f8fafc) 100%)` }}
     >
+      {/* Screen-reader + voice-guidance announcer: every announced change lands here */}
+      <div aria-live="polite" aria-atomic="true" role="status" className="sr-only">{liveAnnouncement}</div>
+      <a href="#main-content" className="skip-link">Skip to main content</a>
       {/* ── Header ────────────────────────────────────────────────────────── */}
-      <header className="z-20 flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-white/70 bg-white/70 px-4 py-3 shadow-soft backdrop-blur-xl sm:px-6">
+      <header className="liquid-glass z-20 flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-none border-x-0 border-t-0 px-4 py-3 sm:px-6">
         <div className="flex items-center gap-3">
           <div className="rounded-2xl bg-ember p-2.5 text-white shadow-lg shadow-ember/30">
             <ChefHat size={20} />
           </div>
           <div>
             <p className="text-base font-semibold tracking-tight">ChefAI</p>
-            <p className="text-xs text-slate-500">Premium AI cooking assistant</p>
+            <p className="text-xs text-slate-500">Your AI cooking assistant</p>
           </div>
         </div>
 
@@ -454,7 +784,7 @@ function App() {
                   {isActive && (
                     <motion.span
                       layoutId="view-pill-indicator"
-                      className={`absolute inset-0 rounded-full bg-gradient-to-r ${view.accent} shadow`}
+                      className={`absolute inset-0 rounded-full ${view.accent} shadow`}
                       transition={reduceMotionEnabled ? { duration: 0 } : { type: 'spring', bounce: 0.25, duration: 0.5 }}
                     />
                   )}
@@ -472,6 +802,13 @@ function App() {
           <button
             className="rounded-full border border-slate-200 bg-white/80 p-2 text-slate-600 transition hover:border-ember hover:text-ember"
             onClick={() => setIsAccessibilityOpen(true)}
+            aria-label="Open appearance settings"
+          >
+            <Palette size={17} />
+          </button>
+          <button
+            className="rounded-full border border-slate-200 bg-white/80 p-2 text-slate-600 transition hover:border-ember hover:text-ember"
+            onClick={() => setIsAccessibilityOpen(true)}
             aria-label="Open accessibility options"
           >
             <Accessibility size={17} />
@@ -479,13 +816,41 @@ function App() {
           <button className="rounded-full border border-slate-200 bg-white/80 p-2 text-slate-600 transition hover:border-ember hover:text-ember" aria-label="Notifications">
             <Bell size={17} />
           </button>
-          <button
-            className="rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700"
-            onClick={() => setIsAuthOpen(true)}
-            aria-label="Open sign in"
-          >
-            {isSignedIn ? '✓ Signed in' : 'Sign in'}
-          </button>
+          {authUser ? (
+            <div className="flex items-center gap-2">
+              <span
+                className="hidden max-w-[180px] items-center gap-2 rounded-full border border-slate-200 bg-white/80 px-3 py-2 text-sm font-medium text-slate-700 sm:inline-flex"
+                title={authUser.email}
+              >
+                <UserRound size={15} className="text-ember" />
+                <span className="truncate">{authUser.name}</span>
+              </span>
+              <button
+                className="rounded-full border border-slate-200 bg-white/80 p-2 text-slate-600 transition hover:border-red-300 hover:text-red-600"
+                onClick={handleSignOut}
+                aria-label="Sign out"
+                title={`Signed in as ${authUser.email}`}
+              >
+                <LogOut size={16} />
+              </button>
+              <button
+                className="rounded-full border border-slate-200 bg-white/80 p-2 text-slate-600 transition hover:border-red-300 hover:text-red-600"
+                onClick={handleDeleteAccount}
+                aria-label="Delete account and all saved recipes"
+                title="Delete account and all saved recipes"
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
+          ) : (
+            <button
+              className="rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700"
+              onClick={() => openAuth('signin')}
+              aria-label="Open sign in"
+            >
+              Sign in
+            </button>
+          )}
         </div>
       </header>
 
@@ -494,8 +859,8 @@ function App() {
         {/* Left icon rail (macOS style, wide screens) */}
         <nav
           aria-label="Feature rail"
-          className={`z-10 hidden w-16 shrink-0 flex-col items-center gap-2 border-r py-4 backdrop-blur-xl lg:flex ${
-            highContrast ? 'border-slate-700 bg-slate-900/90' : 'border-white/70 bg-white/60'
+          className={`liquid-glass z-10 hidden w-16 shrink-0 flex-col items-center gap-2 rounded-none border-y-0 border-l-0 py-4 lg:flex ${
+            highContrast ? 'bg-slate-900/90' : ''
           }`}
         >
           {VIEWS.map((view) => {
@@ -511,7 +876,7 @@ function App() {
                 title={`${view.label} — ${view.description}`}
                 className={`group relative flex h-11 w-11 items-center justify-center rounded-2xl transition ${
                   isActive
-                    ? `bg-gradient-to-br ${view.accent} text-white shadow-lg`
+                    ? `${view.accent} text-accent-ink shadow-lg`
                     : highContrast
                       ? 'text-slate-300 hover:bg-slate-800 hover:text-white'
                       : 'text-slate-500 hover:bg-white hover:text-ember hover:shadow-sm'
@@ -534,7 +899,7 @@ function App() {
         </nav>
 
         {/* Swipeable view deck — all views stay mounted so state persists */}
-        <main className="min-w-0 flex-1 overflow-hidden px-4 py-4 sm:px-6">
+        <main id="main-content" className="min-w-0 flex-1 overflow-hidden px-4 py-4 sm:px-6">
           <motion.div
             className="h-full"
             drag="x"
@@ -599,6 +964,8 @@ function App() {
                   isChatLoading={isChatLoading}
                   chatError={chatError}
                   activeRecipe={activeRecipe}
+                  savedRecipes={savedRecipes}
+                  onSwitchRecipe={handleSwitchChatRecipe}
                   chatBottomRef={chatBottomRef}
                   onSendMessage={handleSendMessage}
                   onNavigate={navigateToView}
@@ -614,48 +981,130 @@ function App() {
           MODALS
       ════════════════════════════════════════════════════════════════════ */}
 
-      {/* ── Full Recipe Detail Modal ───────────────────────────────────── */}
+      {/* ── Idea Picker: full-window overlay ─────────────────────────────── */}
       <AnimatePresence>
-        {isRecipeDetailOpen && detailRecipe && (
+        {recipeIdeas && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 px-4 backdrop-blur-sm"
+            className="fixed inset-0 z-[70] overflow-y-auto bg-slate-950/70 backdrop-blur-md"
+            role="dialog"
+            aria-label="Choose a dish concept"
           >
-            <motion.div
-              initial={{ y: 24, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: 24, opacity: 0 }}
-              className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-[30px] border border-white/70 bg-white shadow-2xl"
-            >
-              {/* Header */}
-              <div className="sticky top-0 flex items-center justify-between rounded-t-[30px] border-b border-slate-100 bg-white/90 px-6 py-4 backdrop-blur-sm">
-                <div>
-                  {detailRecipe.tag && (
-                    <span className="rounded-full bg-ember/10 px-3 py-1 text-xs font-medium text-ember">{detailRecipe.tag}</span>
-                  )}
-                  <h2 className="mt-1 text-xl font-semibold text-slate-900">{detailRecipe.title}</h2>
+            <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col justify-center px-4 py-10">
+              <div className="text-center">
+                <p className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-1.5 text-sm font-medium text-white">
+                  <Sparkles size={15} /> ChefAI brainstormed 3 ways to cook this
+                </p>
+                <h2 className="mt-4 text-3xl font-semibold text-white sm:text-4xl">Pick your mission</h2>
+                <p className="mt-2 text-white/70">Same ingredients, three levels of ambition. Choose one and ChefAI builds the full recipe.</p>
+              </div>
+
+              <div className="mt-10 grid gap-5 md:grid-cols-3">
+                {recipeIdeas.map((idea, index) => {
+                  const complexityStyles = {
+                    Simple: 'from-emerald-500/80 to-emerald-600/80',
+                    Intermediate: 'from-amber-500/80 to-amber-600/80',
+                    Ambitious: 'from-rose-500/80 to-rose-600/80',
+                  };
+                  return (
+                    <motion.button
+                      key={idea.id || index}
+                      type="button"
+                      onClick={() => handleSelectIdea(idea)}
+                      disabled={isSelectingIdea}
+                      initial={{ opacity: 0, y: 24 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: index * 0.08, duration: 0.35 }}
+                      whileHover={reduceMotionEnabled ? undefined : { y: -6 }}
+                      className="dark-glass group flex flex-col rounded-[26px] p-6 text-left transition disabled:cursor-wait disabled:opacity-70"
+                    >
+                      <span className={`inline-flex w-fit items-center gap-1.5 rounded-full bg-gradient-to-r ${complexityStyles[idea.complexity] || complexityStyles.Intermediate} px-3 py-1 text-xs font-bold uppercase tracking-wider text-white`}>
+                        {idea.complexity || 'Intermediate'}
+                      </span>
+                      <h3 className="mt-4 text-xl font-semibold text-white">{idea.title}</h3>
+                      <p className="mt-2 flex-1 text-sm leading-6 text-white/70">{idea.description}</p>
+                      {idea.keyTwist && (
+                        <p className="mt-3 rounded-[14px] border border-white/10 bg-white/5 px-3 py-2 text-xs leading-5 text-white/80">
+                          ✨ {idea.keyTwist}
+                        </p>
+                      )}
+                      <div className="mt-5 flex items-center justify-between">
+                        <span className="text-sm text-white/60">⏱ {idea.time || '—'}</span>
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-ember px-4 py-1.5 text-sm font-medium text-white transition group-hover:bg-accent-strong">
+                          {isSelectingIdea ? 'Cooking…' : 'Make this'} <ArrowRight size={14} />
+                        </span>
+                      </div>
+                    </motion.button>
+                  );
+                })}
+              </div>
+
+              <div className="mt-8 text-center">
+                <button
+                  type="button"
+                  onClick={handleDismissIdeas}
+                  className="rounded-full border border-white/20 bg-white/10 px-5 py-2 text-sm font-medium text-white/80 transition hover:bg-white/20"
+                >
+                  ← Back to edit my request
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Recipe Floating Window (draggable liquid glass) ───────────── */}
+      <AnimatePresence>
+        {isRecipeDetailOpen && detailRecipe && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.92, y: 24 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.92, y: 24 }}
+            transition={reduceMotionEnabled ? { duration: 0 } : { type: 'spring', bounce: 0.28, duration: 0.55 }}
+            drag
+            dragMomentum={false}
+            dragElastic={0.08}
+            dragListener={isWindowDragArmed}
+            className="fixed inset-2 z-50 flex flex-col overflow-hidden rounded-[30px] liquid-glass shadow-glass sm:inset-6"
+            role="dialog"
+            aria-label={`Recipe: ${detailRecipe.title}`}
+          >
+              {/* Window title bar — press and hold to drag */}
+              <div
+                className="flex shrink-0 items-center justify-between gap-3 border-b border-white/40 bg-white/40 px-5 py-3.5 backdrop-blur-md select-none"
+                onPointerDown={() => setIsWindowDragArmed(true)}
+                style={{ cursor: isWindowDragArmed ? 'grabbing' : 'grab' }}
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <Move size={14} className="shrink-0 text-slate-400" />
+                  <div className="min-w-0">
+                    {detailRecipe.tag && (
+                      <span className="rounded-full bg-ember/15 px-2.5 py-0.5 text-[11px] font-semibold text-accent-ink">{detailRecipe.tag}</span>
+                    )}
+                    <h2 className="truncate text-lg font-semibold text-slate-900">{detailRecipe.title}</h2>
+                  </div>
                 </div>
                 <button
-                  onClick={() => setIsRecipeDetailOpen(false)}
-                  className="rounded-full border border-slate-200 p-2 text-slate-600 transition hover:border-ember hover:text-ember"
-                  aria-label="Close recipe detail"
+                  onClick={handleCloseRecipeWindow}
+                  className="shrink-0 rounded-full border border-slate-200 bg-white/80 p-2 text-slate-600 transition hover:border-ember hover:text-ember"
+                  aria-label="Close recipe window"
                 >
                   <X size={18} />
                 </button>
               </div>
 
-              <div className="space-y-6 p-6">
+              <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-6">
                 {/* Meta */}
                 <div className="flex flex-wrap gap-2 text-sm">
-                  {detailRecipe.time && <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-600">{detailRecipe.time}</span>}
-                  {detailRecipe.difficulty && <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-600">{detailRecipe.difficulty}</span>}
-                  {detailRecipe.servings && <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-600">Serves {detailRecipe.servings}</span>}
-                  {detailRecipe.cuisine && <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-600">{detailRecipe.cuisine}</span>}
+                  {detailRecipe.time && <span className="rounded-full bg-white/70 px-3 py-1 text-slate-600">{detailRecipe.time}</span>}
+                  {detailRecipe.difficulty && <span className="rounded-full bg-white/70 px-3 py-1 text-slate-600">{detailRecipe.difficulty}</span>}
+                  {detailRecipe.servings && <span className="rounded-full bg-white/70 px-3 py-1 text-slate-600">Serves {detailRecipe.servings}</span>}
+                  {detailRecipe.cuisine && <span className="rounded-full bg-white/70 px-3 py-1 text-slate-600">{detailRecipe.cuisine}</span>}
                 </div>
 
-                <p className="leading-7 text-slate-600">{detailRecipe.description}</p>
+                <p className="leading-7 text-slate-700">{detailRecipe.description}</p>
 
                 {/* Nutrition */}
                 {detailRecipe.nutrition && (
@@ -670,8 +1119,8 @@ function App() {
                         { label: 'Fiber', value: detailRecipe.nutrition.fiber },
                         { label: 'Sodium', value: detailRecipe.nutrition.sodium },
                       ].map((n) => (
-                        <div key={n.label} className="rounded-[14px] border border-slate-200 bg-slate-50 px-2 py-2 text-center">
-                          <p className="text-xs text-slate-400">{n.label}</p>
+                        <div key={n.label} className="rounded-[14px] border border-white/60 bg-white/60 px-2 py-2 text-center">
+                          <p className="text-xs text-slate-500">{n.label}</p>
                           <p className="mt-0.5 text-sm font-semibold text-slate-800">{n.value}</p>
                         </div>
                       ))}
@@ -685,7 +1134,7 @@ function App() {
                     <h3 className="flex items-center gap-2 font-semibold text-slate-900"><Layers3 size={16} className="text-ember" /> Ingredients</h3>
                     <ul className="mt-3 space-y-2">
                       {detailRecipe.ingredients.map((ing, i) => (
-                        <li key={i} className="flex items-center gap-3 rounded-[14px] border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-700">
+                        <li key={i} className="flex items-center gap-3 rounded-[14px] border border-white/60 bg-white/60 px-4 py-2.5 text-sm text-slate-700">
                           <BadgeCheck size={14} className="shrink-0 text-ember" />
                           {typeof ing === 'object' ? `${ing.amount} ${ing.name}` : ing}
                         </li>
@@ -700,8 +1149,8 @@ function App() {
                     <h3 className="flex items-center gap-2 font-semibold text-slate-900"><BookOpen size={16} className="text-ember" /> Instructions</h3>
                     <ol className="mt-3 space-y-3">
                       {detailRecipe.instructions.map((step, i) => (
-                        <li key={i} className="flex gap-3 rounded-[16px] border border-slate-200 bg-slate-50 px-4 py-3">
-                          <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ember/10 text-xs font-bold text-ember">{i + 1}</span>
+                        <li key={i} className="flex gap-3 rounded-[16px] border border-white/60 bg-white/60 px-4 py-3">
+                          <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ember/15 text-xs font-bold text-ember">{i + 1}</span>
                           <p className="text-sm leading-6 text-slate-700">{step}</p>
                         </li>
                       ))}
@@ -729,22 +1178,70 @@ function App() {
                   </div>
                 )}
 
+                {/* Learn it: video + article links (AI-suggested queries → real sources) */}
+                {detailRecipe.tutorials && (
+                  <div>
+                    <h3 className="flex items-center gap-2 font-semibold text-slate-900"><Video size={16} className="text-ember" /> Learn to make it</h3>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <a
+                        href={detailRecipe.tutorials.videoUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-3 rounded-[16px] border border-white/60 bg-white/60 px-4 py-3 transition hover:border-ember"
+                      >
+                        <Video size={18} className="shrink-0 text-ember" />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium text-slate-800">Watch a video tutorial</span>
+                          <span className="block truncate text-xs text-slate-500">{detailRecipe.tutorials.videoQuery}</span>
+                        </span>
+                      </a>
+                      <a
+                        href={detailRecipe.tutorials.articleUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-3 rounded-[16px] border border-white/60 bg-white/60 px-4 py-3 transition hover:border-ember"
+                      >
+                        <Newspaper size={18} className="shrink-0 text-ember" />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium text-slate-800">Read an in-depth guide</span>
+                          <span className="block truncate text-xs text-slate-500">{detailRecipe.tutorials.articleQuery}</span>
+                        </span>
+                      </a>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-400">Opens real search results across YouTube and the web — technique-focused, source-agnostic.</p>
+                  </div>
+                )}
+
                 <div className="flex gap-3 pt-2">
                   <button
                     onClick={() => handleSaveRecipe(detailRecipe)}
-                    className={`flex flex-1 items-center justify-center gap-2 rounded-full py-2.5 text-sm font-medium text-white transition ${saveSuccess ? 'bg-emerald-600' : 'bg-slate-900 hover:bg-slate-700'}`}
+                    className={`flex flex-1 items-center justify-center gap-2 rounded-full py-2.5 text-sm font-medium text-white transition ${saveSuccess ? 'bg-emerald-600' : 'bg-ember hover:bg-accent-strong'}`}
                   >
                     <BookmarkPlus size={16} /> {saveSuccess ? 'Saved!' : 'Save recipe'}
                   </button>
                   <button
-                    onClick={() => setIsRecipeDetailOpen(false)}
-                    className="rounded-full border border-slate-200 px-6 py-2.5 text-sm font-medium text-slate-600"
+                    onClick={handleCloseRecipeWindow}
+                    className="rounded-full border border-slate-200 bg-white/80 px-6 py-2.5 text-sm font-medium text-slate-600"
                   >
                     Close
                   </button>
                 </div>
               </div>
-            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Auto-save toast ─────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {autoSaveNotice && (
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 16 }}
+            role="status"
+            className="fixed bottom-5 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-2 rounded-full bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white shadow-xl"
+          >
+            <Check size={15} /> Auto-saved “{autoSaveNotice}” to your recipes
           </motion.div>
         )}
       </AnimatePresence>
@@ -766,28 +1263,89 @@ function App() {
             >
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm font-medium text-slate-500">Welcome</p>
+                  <p className="text-sm font-medium text-slate-500">Welcome to ChefAI</p>
                   <h2 className="text-2xl font-semibold text-slate-900">
-                    {isSignedIn ? 'You are signed in' : 'Sign in to ChefAI'}
+                    {authMode === 'signup' ? 'Create your account' : 'Sign in'}
                   </h2>
                 </div>
                 <button type="button" onClick={() => setIsAuthOpen(false)} className="rounded-full border border-slate-200 p-2 text-slate-600" aria-label="Close sign in">
                   <X size={18} />
                 </button>
               </div>
-              <form onSubmit={handleSignIn} className="mt-6 space-y-4">
+
+              <form onSubmit={handleAuthSubmit} className="mt-6 space-y-4">
+                {authMode === 'signup' && (
+                  <label className="block text-sm font-medium text-slate-700">
+                    Name
+                    <input
+                      aria-label="Name"
+                      type="text"
+                      value={authName}
+                      onChange={(e) => setAuthName(e.target.value)}
+                      placeholder="How should ChefAI greet you?"
+                      className="mt-2 w-full rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-ember"
+                    />
+                  </label>
+                )}
                 <label className="block text-sm font-medium text-slate-700">
                   Email
-                  <input aria-label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="mt-2 w-full rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-ember" />
+                  <input aria-label="Email" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className="mt-2 w-full rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-ember" />
                 </label>
                 <label className="block text-sm font-medium text-slate-700">
                   Password
-                  <input aria-label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="mt-2 w-full rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-ember" />
+                  <input
+                    aria-label="Password"
+                    type="password"
+                    required
+                    minLength={authMode === 'signup' ? 8 : 1}
+                    autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder={authMode === 'signup' ? 'At least 8 characters' : ''}
+                    className="mt-2 w-full rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-ember"
+                  />
                 </label>
-                <button type="submit" className="w-full rounded-full bg-ember px-4 py-2.5 font-medium text-white shadow shadow-ember/30 transition hover:bg-ember/90">
-                  Continue
+
+                {authMode === 'signup' && (
+                  <ConsentCheckbox checked={signupConsent} onChange={setSignupConsent} error={authError && authError.startsWith('Please agree') ? authError : ''} />
+                )}
+
+                {authError && !authError.startsWith('Please agree') && (
+                  <p role="alert" className="rounded-[16px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{authError}</p>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={isAuthBusy}
+                  className="flex w-full items-center justify-center gap-2 rounded-full bg-ember px-4 py-2.5 font-medium text-white shadow shadow-ember/30 transition hover:bg-ember/90 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isAuthBusy && <Loader2 size={16} className="animate-spin" />}
+                  {authMode === 'signup' ? 'Create account' : 'Continue'}
                 </button>
               </form>
+
+              {authMode === 'signup' && (
+                <p className="mt-2 text-center text-[11px] leading-snug text-slate-500">
+                  By creating an account you consent to the documents above. Read them first:
+                  {' '}
+                  <button type="button" className="font-semibold text-ember hover:underline" onClick={() => { setIsAuthOpen(false); setActiveDoc('terms'); }}>Terms</button>
+                  {' · '}
+                  <button type="button" className="font-semibold text-ember hover:underline" onClick={() => { setIsAuthOpen(false); setActiveDoc('privacy'); }}>Privacy Policy</button>
+                  {' · '}
+                  <button type="button" className="font-semibold text-ember hover:underline" onClick={() => { setIsAuthOpen(false); setActiveDoc('cookies'); }}>Cookie Policy</button>
+                </p>
+              )}
+
+              <p className="mt-5 text-center text-sm text-slate-600">
+                {authMode === 'signup' ? 'Already have an account?' : 'New to ChefAI?'}{' '}
+                <button
+                  type="button"
+                  className="font-semibold text-ember hover:underline"
+                  onClick={() => setAuthMode(authMode === 'signup' ? 'signin' : 'signup')}
+                >
+                  {authMode === 'signup' ? 'Sign in' : 'Create one free'}
+                </button>
+              </p>
             </motion.div>
           </motion.div>
         )}
@@ -811,24 +1369,125 @@ function App() {
                 <X size={16} />
               </button>
             </div>
+            <div className="mt-4">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Accent color</p>
+              <div className="mt-2 flex flex-wrap gap-2" role="radiogroup" aria-label="Accent color">
+                {ACCENT_THEMES.map((theme) => {
+                  const isActive = appearance.accent === theme.id;
+                  return (
+                    <button
+                      key={theme.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={isActive}
+                      aria-label={`${theme.label} accent`}
+                      title={theme.label}
+                      onClick={() => setAccent(theme.id)}
+                      className={`flex h-8 w-8 items-center justify-center rounded-full border-2 transition ${
+                        isActive ? 'border-slate-900 scale-110' : 'border-slate-200 hover:scale-105'
+                      }`}
+                      style={{ backgroundColor: theme.swatch }}
+                    >
+                      {isActive && (
+                        <Check size={14} className="text-ember drop-shadow" style={{ color: theme.id === 'white' || theme.id === 'yellow' ? '#334155' : '#ffffff' }} />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="mt-4 flex items-center justify-between gap-3 rounded-[18px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 transition hover:border-ember/30">
+              <p className="font-medium text-slate-700">Liquid glass</p>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={appearance.liquidGlass}
+                aria-label="Liquid glass"
+                onClick={toggleLiquidGlass}
+                className={`flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-colors ${
+                  appearance.liquidGlass ? 'bg-ember' : 'bg-slate-300'
+                }`}
+              >
+                <span
+                  aria-hidden="true"
+                  className={`h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                    appearance.liquidGlass ? 'translate-x-[18px]' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
             <div className="mt-4 space-y-3 text-sm text-slate-600">
               {accessibilityOptionLabels.map((option) => (
-                <label key={option.key} className="flex cursor-pointer items-center justify-between rounded-[18px] border border-slate-200 bg-slate-50 px-3 py-2 transition hover:border-ember/30">
-                  <span>{option.label}</span>
-                  <input
-                    type="checkbox"
+                <div
+                  key={option.key}
+                  className="flex items-center justify-between gap-3 rounded-[18px] border border-slate-200 bg-slate-50 px-3 py-2 transition hover:border-ember/30"
+                >
+                  <div className="min-w-0">
+                    <p className="font-medium text-slate-700">{option.label}</p>
+                    <p className="text-xs leading-snug text-slate-500">{option.description}</p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={accessibilitySettings[option.key]}
                     aria-label={option.label}
-                    checked={accessibilitySettings[option.key]}
-                    onChange={() => toggleAccessibilitySetting(option.key)}
-                    className="h-4 w-4 rounded border-slate-300 text-ember focus:ring-ember"
-                  />
-                </label>
+                    onClick={() => toggleAccessibilitySetting(option.key)}
+                    className={`flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-colors ${
+                      accessibilitySettings[option.key] ? 'bg-ember' : 'bg-slate-300'
+                    }`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                        accessibilitySettings[option.key] ? 'translate-x-[18px]' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
               ))}
             </div>
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ── Cookie / processing consent banner ─────────────────────────── */}
+      {!consent.decided && (
+        <ConsentBanner
+          onDecide={(record) => {
+            setConsent(record);
+            announce('Privacy choices saved. You can change them anytime in the footer.');
+          }}
+        />
+      )}
+
+      {/* ── Footer: legal links + change consent ───────────────────────── */}
+      <footer className="shrink-0 border-t border-slate-900/10 px-4 py-2.5 sm:px-6">
+        <nav aria-label="Legal" className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
+          <span>© {new Date().getFullYear()} ChefAI · AI-generated recipes — verify food safety</span>
+          <button type="button" className="font-medium underline decoration-slate-300 underline-offset-2 hover:text-ember" onClick={() => setActiveDoc('privacy')}>Privacy Policy</button>
+          <button type="button" className="font-medium underline decoration-slate-300 underline-offset-2 hover:text-ember" onClick={() => setActiveDoc('terms')}>Terms &amp; Conditions</button>
+          <button type="button" className="font-medium underline decoration-slate-300 underline-offset-2 hover:text-ember" onClick={() => setActiveDoc('cookies')}>Cookie Policy</button>
+          <button type="button" className="font-medium underline decoration-slate-300 underline-offset-2 hover:text-ember" onClick={() => setActiveDoc('refund')}>Refund Policy</button>
+          <button
+            type="button"
+            className="font-medium underline decoration-slate-300 underline-offset-2 hover:text-ember"
+            onClick={() => {
+              localStorage.removeItem('chefai-cookie-consent');
+              setConsent(readStoredConsent());
+            }}
+            aria-label="Review cookie and privacy choices"
+          >
+            Cookie choices
+          </button>
+        </nav>
+      </footer>
+
+      {/* ── Legal document viewer ──────────────────────────────────────── */}
+      {activeDoc && (
+        <LegalDocs docId={activeDoc} onClose={() => setActiveDoc(null)} />
+      )}
     </div>
+    </MotionConfig>
   );
 }
 

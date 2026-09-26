@@ -1,16 +1,61 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Star, Trash2, Plus, Heart, Clock3 } from 'lucide-react';
+import { Star, Trash2, Plus, Heart, Clock3, Search, Sparkles, AlertCircle } from 'lucide-react';
+import { searchRecipes } from '../semanticSearch';
 
 export default function SavedView({ savedRecipes, onOpenRecipe, onDeleteSaved, onToggleFavorite, onNavigate, accessibilitySettings }) {
   const highContrast = accessibilitySettings.highContrast;
 
-  const favorites = savedRecipes.filter((recipe) => recipe.isFavorite);
-  const others = savedRecipes.filter((recipe) => !recipe.isFavorite);
-  const ordered = [...favorites, ...others];
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchMode, setSearchMode] = useState(null); // 'semantic' | 'keyword' | 'error'
+  const debounceRef = useRef(null);
+  const requestSeqRef = useRef(0);
+
+  // Debounced semantic search — falls back to keyword scoring offline
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const trimmed = query.trim();
+
+    if (!trimmed) {
+      setResults([]);
+      setSearchMode(null);
+      setIsSearching(false);
+      return undefined;
+    }
+
+    setIsSearching(true);
+    debounceRef.current = setTimeout(async () => {
+      const seq = requestSeqRef.current + 1;
+      requestSeqRef.current = seq;
+      try {
+        const ranked = await searchRecipes(trimmed, savedRecipes);
+        if (requestSeqRef.current !== seq) return;
+        setResults(ranked);
+        setSearchMode(ranked[0]?.mode || 'semantic');
+      } catch {
+        if (requestSeqRef.current !== seq) return;
+        setSearchMode('error');
+      } finally {
+        if (requestSeqRef.current === seq) setIsSearching(false);
+      }
+    }, 350);
+
+    return () => clearTimeout(debounceRef.current);
+  }, [query, savedRecipes]);
+
+  const showRanked = query.trim().length > 0 && results.length > 0;
+  const favorites = useMemo(() => savedRecipes.filter((recipe) => recipe.isFavorite), [savedRecipes]);
+  const ordered = useMemo(() => {
+    if (showRanked) return results.map((entry) => ({ ...entry.recipe, searchScore: entry.score }));
+    const others = savedRecipes.filter((recipe) => !recipe.isFavorite);
+    return [...favorites, ...others];
+  }, [showRanked, results, savedRecipes, favorites]);
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
-      <section className={`rounded-[28px] border border-white/70 bg-white/70 p-6 shadow-soft backdrop-blur-xl ${highContrast ? 'border-slate-700 bg-slate-900' : ''}`}>
+      <section className="liquid-glass rounded-[28px] p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className={`text-sm font-medium ${highContrast ? 'text-slate-300' : 'text-slate-500'}`}>Saved recipes</p>
@@ -34,6 +79,34 @@ export default function SavedView({ savedRecipes, onOpenRecipe, onDeleteSaved, o
             </button>
           </div>
         </div>
+
+        {/* ── Semantic search ────────────────────────────────────────────── */}
+        {savedRecipes.length > 0 && (
+          <div className="mt-5">
+            <div className="relative">
+              <Search size={16} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search by craving — “something creamy and herby”…"
+                aria-label="Search saved recipes"
+                className="w-full rounded-[18px] border border-slate-200 bg-slate-50 py-2.5 pl-11 pr-10 text-sm outline-none focus:border-ember focus:ring-1 focus:ring-ember"
+              />
+              {isSearching && (
+                <Sparkles size={15} className="absolute right-4 top-1/2 -translate-y-1/2 animate-pulse text-ember" />
+              )}
+            </div>
+            {query.trim() && searchMode === 'keyword' && (
+              <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-400">
+                <AlertCircle size={12} /> Semantic search unavailable — showing keyword matches.
+              </p>
+            )}
+            {query.trim() && searchMode === 'semantic' && !isSearching && (
+              <p className="mt-2 text-xs text-slate-400">Ranked by semantic similarity ✨</p>
+            )}
+          </div>
+        )}
 
         {savedRecipes.length === 0 ? (
           <div className="mt-6 rounded-[20px] border border-dashed border-slate-200 bg-slate-50 p-10 text-center">
@@ -75,6 +148,11 @@ export default function SavedView({ savedRecipes, onOpenRecipe, onDeleteSaved, o
                       <Clock3 size={13} /> {recipe.time} • {recipe.difficulty}
                       {recipe.nutrition?.calories ? ` • ${recipe.nutrition.calories} kcal` : ''}
                     </p>
+                    {typeof recipe.searchScore === 'number' && (
+                      <span className="mt-1 inline-block rounded-full bg-ember/10 px-2 py-0.5 text-[11px] font-medium text-ember">
+                        {Math.round(recipe.searchScore * 100)}% match
+                      </span>
+                    )}
                   </button>
                   <button
                     type="button"

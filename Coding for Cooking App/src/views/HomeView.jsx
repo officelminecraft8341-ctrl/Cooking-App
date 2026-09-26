@@ -40,9 +40,7 @@ export default function HomeView({ accessibilitySettings, onNavigate }) {
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
       {/* ── Greeting ─────────────────────────────────────────────────────── */}
-      <section
-        className={`rounded-[28px] border border-white/70 bg-white/70 p-6 shadow-soft backdrop-blur-xl sm:p-8 ${highContrast ? 'border-slate-700 bg-slate-900' : ''}`}
-      >
+      <section className="liquid-glass rounded-[28px] p-6 sm:p-8">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="max-w-2xl">
             <p className="mb-3 inline-flex items-center gap-2 rounded-full bg-ember/10 px-3 py-1 text-sm font-medium text-ember">
@@ -73,9 +71,7 @@ export default function HomeView({ accessibilitySettings, onNavigate }) {
         </div>
 
         {/* ── Quick input bar ────────────────────────────────────────────── */}
-        <div
-          className={`mt-7 rounded-[26px] border border-slate-200/80 p-5 text-white shadow-2xl ${highContrast ? 'bg-slate-800' : 'bg-slate-950/95'}`}
-        >
+        <div className={`mt-7 rounded-[26px] p-5 text-white shadow-2xl ${highContrast ? 'bg-slate-800' : 'dark-glass'}`}>
           <form
             onSubmit={(event) => {
               event.preventDefault();
@@ -127,13 +123,13 @@ export default function HomeView({ accessibilitySettings, onNavigate }) {
                 whileHover={reduceMotion ? undefined : { y: -4, scale: 1.01 }}
                 transition={reduceMotion ? { duration: 0 } : undefined}
                 onClick={() => onNavigate(item.view)}
-                className={`rounded-[22px] border p-5 text-left transition ${
+                className={`rounded-[22px] border p-5 text-left shadow-lg transition ${
                   highContrast
                     ? 'border-slate-600 bg-slate-800 text-slate-50'
-                    : 'border-slate-200/80 bg-slate-50/80 hover:border-ember/40'
+                    : 'border-slate-200 bg-white hover:border-ember/60 hover:shadow-ember/20'
                 }`}
               >
-                <div className="mb-3 inline-flex rounded-2xl bg-white p-2 text-ember shadow-sm">
+                <div className="mb-3 inline-flex rounded-2xl bg-ember/15 p-2 text-ember">
                   <Icon size={18} />
                 </div>
                 <p className={`text-xs font-medium uppercase tracking-wider ${highContrast ? 'text-slate-300' : 'text-slate-400'}`}>
@@ -150,14 +146,7 @@ export default function HomeView({ accessibilitySettings, onNavigate }) {
         </div>
       </section>
 
-      {/* ── Cooking mode teaser ──────────────────────────────────────────── */}
-      <section
-        className={`rounded-[28px] border p-5 shadow-soft ${
-          highContrast
-            ? 'border-slate-600 bg-slate-800'
-            : 'border-white/70 bg-gradient-to-br from-ember/10 via-white to-emerald/10'
-        }`}
-      >
+      {/* ── Cooking mode teaser ──────────────────────────────────────────── */}      <section className="liquid-glass rounded-[28px] p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-ember">
             <BookOpen size={18} />

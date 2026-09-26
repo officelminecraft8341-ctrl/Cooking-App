@@ -1,8 +1,10 @@
+import { useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   Sparkles, Plus, X, ArrowRight, AlertCircle, Loader2, BookmarkPlus, Flame, Layers3,
-  BadgeCheck, TimerReset, Search,
+  BadgeCheck, TimerReset, ShieldCheck, Accessibility, Camera, ImagePlus, Wand2,
 } from 'lucide-react';
+import { fileToDataUrl } from '../apiClient';
 
 const DIET_OPTIONS = [
   'Vegetarian', 'Vegan', 'Gluten-Free', 'Dairy-Free',
@@ -49,17 +51,31 @@ export default function GeneratorView({
     genStrictMode, setGenStrictMode,
     genAccessibility, setGenAccessibility,
     customAccessibilityInput, setCustomAccessibilityInput,
+    genImage, setGenImage,
+    isFindingFromImage,
+    onFindFromImage,
   } = form;
+
+  const photoInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+
+  const addPhotoSafely = async (files) => {
+    const file = files?.[0];
+    if (!file) return;
+    try {
+      setGenImage(await fileToDataUrl(file, 1280, 0.82));
+    } catch { /* keep silent — the preview simply won't update */ }
+  };
 
   const highContrast = accessibilitySettings.highContrast;
   const getIngredientLabel = (ingredient) =>
     typeof ingredient === 'object' ? `${ingredient.amount} ${ingredient.name}` : ingredient;
 
   return (
-    <div className="mx-auto grid w-full max-w-6xl gap-5 xl:grid-cols-[1.15fr_0.85fr]">
-      {/* ── Left column: form + draft ────────────────────────────────────── */}
+    <div className="mx-auto grid w-full max-w-6xl gap-5 xl:grid-cols-[1fr_1fr]">
+      {/* ── Left column: the generator form ─────────────────────────────── */}
       <div className="flex flex-col gap-5">
-        <section className={`rounded-[28px] border border-white/70 bg-white/70 p-6 shadow-soft backdrop-blur-xl ${highContrast ? 'border-slate-700 bg-slate-900' : ''}`}>
+        <section className="liquid-glass rounded-[28px] p-6">
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className={`text-sm font-medium ${highContrast ? 'text-slate-300' : 'text-slate-500'}`}>AI recipe studio</p>
@@ -98,6 +114,73 @@ export default function GeneratorView({
                 placeholder="chicken, garlic, lemon, spinach, olive oil…"
                 className="mt-2 w-full rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-ember focus:ring-1 focus:ring-ember"
               />
+
+              {/* Photo pantry: snap or upload what you have / a dish you want to make */}
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(event) => { addPhotoSafely(event.target.files); event.target.value = ''; }}
+                aria-hidden="true"
+                tabIndex={-1}
+              />
+              <input
+                ref={photoInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(event) => { addPhotoSafely(event.target.files); event.target.value = ''; }}
+                aria-hidden="true"
+                tabIndex={-1}
+              />
+
+              {genImage ? (
+                <div className="mt-3 flex items-center gap-3 rounded-[18px] border border-slate-200 bg-slate-50/60 p-3">
+                  <img src={genImage} alt="Your food photo" className="h-16 w-16 rounded-[14px] border border-slate-200 object-cover" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-slate-700">Photo attached</p>
+                    <p className="text-xs text-slate-500">ChefAI will identify this and find the recipe.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onFindFromImage}
+                    disabled={isFindingFromImage}
+                    className="flex shrink-0 items-center gap-2 rounded-full bg-ember px-4 py-2 text-xs font-medium text-white shadow shadow-ember/30 transition hover:bg-ember/90 disabled:opacity-60"
+                  >
+                    {isFindingFromImage
+                      ? <><Loader2 size={14} className="animate-spin" /> Finding…</>
+                      : <><Wand2 size={14} /> Find recipe</>}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGenImage(null)}
+                    className="shrink-0 rounded-full border border-slate-200 p-1.5 text-slate-500 transition hover:border-red-300 hover:text-red-500"
+                    aria-label="Remove photo"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => cameraInputRef.current?.click()}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-ember hover:text-ember"
+                  >
+                    <Camera size={14} /> Snap what you have
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => photoInputRef.current?.click()}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-ember hover:text-ember"
+                  >
+                    <ImagePlus size={14} /> Upload a food photo
+                  </button>
+                  <span className="text-xs text-slate-400">— ChefAI reads the photo and finds the recipe</span>
+                </div>
+              )}
             </div>
 
             {/* Cuisine + Diet */}
@@ -264,8 +347,15 @@ export default function GeneratorView({
             </div>
 
             {/* Advanced Constraints */}
-            <div className="space-y-4 rounded-[20px] border border-slate-200 p-4 bg-slate-50/50">
-              <label className="flex items-center gap-3 cursor-pointer">
+            <div className="rounded-[20px] border-2 border-dashed border-slate-300 bg-slate-50/50 p-5 transition-colors hover:border-ember/60">
+              <div className="mb-4 flex items-center gap-2">
+                <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-ember/15 text-ember">
+                  <ShieldCheck size={16} />
+                </span>
+                <span className="text-xs font-semibold uppercase tracking-widest text-slate-500">Advanced constraints</span>
+              </div>
+
+              <label className="flex cursor-pointer items-center gap-3 rounded-[16px] bg-white p-3 transition-colors hover:bg-slate-100/70 has-[:checked]:ring-2 has-[:checked]:ring-ember/50">
                 <input
                   type="checkbox"
                   checked={genStrictMode}
@@ -277,8 +367,11 @@ export default function GeneratorView({
                 </span>
               </label>
 
-              <div>
-                <label htmlFor="gen-accessibility" className="block text-sm font-medium text-slate-700">
+              <div className="mt-4">
+                <label htmlFor="gen-accessibility" className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-ember/15 text-ember">
+                    <Accessibility size={16} />
+                  </span>
                   Accessibility Needs <span className="text-slate-400 font-normal">(Adapt instructions)</span>
                 </label>
                 <select
@@ -330,17 +423,20 @@ export default function GeneratorView({
                 className="flex items-center gap-2 rounded-full bg-ember px-5 py-2.5 text-sm font-medium text-white shadow shadow-ember/30 disabled:opacity-60 disabled:cursor-not-allowed transition hover:bg-ember/90"
               >
                 {isGenerating ? (
-                  <><Loader2 size={16} className="animate-spin" /> Generating…</>
+                  <><Loader2 size={16} className="animate-spin" /> Brainstorming ideas…</>
                 ) : (
-                  <>Generate recipe <ArrowRight size={16} /></>
+                  <>Get recipe ideas <ArrowRight size={16} /></>
                 )}
               </button>
             </div>
           </form>
         </section>
+      </div>
 
+      {/* ── Right column: live draft + tips + chat hand-off ─────────────── */}
+      <div className="flex flex-col gap-5">
         {/* ── AI recipe draft ─────────────────────────────────────────────── */}
-        <section className={`rounded-[28px] border border-white/70 bg-white/70 p-6 shadow-soft backdrop-blur-xl ${highContrast ? 'border-slate-700 bg-slate-900' : ''}`}>
+        <section className="liquid-glass rounded-[28px] p-6">
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className={`text-sm font-medium ${highContrast ? 'text-slate-300' : 'text-slate-500'}`}>AI recipe draft</p>
@@ -403,9 +499,11 @@ export default function GeneratorView({
                 {activeRecipe.servings && <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-600">Serves {activeRecipe.servings}</span>}
               </div>
 
-              {/* Quick nutrition summary */}
+              {/* Quick nutrition summary — AI estimates, not medical advice */}
               {activeRecipe.nutrition && (
-                <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-6">
+                <div className="mt-4">
+                  <p className="mb-1 text-[11px] italic text-slate-500">Nutrition values are AI estimates, not medical advice.</p>
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
                   {[
                     { label: 'Calories', value: activeRecipe.nutrition.calories, unit: 'kcal' },
                     { label: 'Protein', value: activeRecipe.nutrition.protein },
@@ -419,6 +517,7 @@ export default function GeneratorView({
                       <p className="mt-0.5 text-sm font-semibold text-slate-800">{n.value}{n.unit ? ` ${n.unit}` : ''}</p>
                     </div>
                   ))}
+                  </div>
                 </div>
               )}
 
@@ -491,13 +590,8 @@ export default function GeneratorView({
             </div>
           )}
         </section>
-      </div>
 
-      {/* ── Right column: tips + chat hand-off ───────────────────────────── */}
-      <div className="flex flex-col gap-5">
-        <section className={`rounded-[28px] border border-white/70 p-5 shadow-soft backdrop-blur-xl ${
-          highContrast ? 'border-slate-700 bg-slate-900' : 'bg-gradient-to-br from-ember/10 via-white to-emerald/10'
-        }`}>
+        <section className="liquid-glass rounded-[28px] p-5">
           <div className="flex items-center gap-2 text-ember">
             <Sparkles size={18} />
             <p className="font-semibold">How the studio works</p>
@@ -517,7 +611,7 @@ export default function GeneratorView({
           </ol>
         </section>
 
-        <section className={`rounded-[28px] border p-5 shadow-soft ${highContrast ? 'border-slate-700 bg-slate-900' : 'border-white/70 bg-white/70 backdrop-blur-xl'}`}>
+        <section className="liquid-glass rounded-[28px] p-5">
           <div className="flex items-center gap-2 text-ember">
             <Flame size={18} />
             <p className={`font-semibold ${highContrast ? 'text-white' : ''}`}>Locked a draft you like?</p>
@@ -534,17 +628,6 @@ export default function GeneratorView({
           </button>
         </section>
 
-        <section className={`rounded-[28px] border border-white/70 bg-white/70 p-5 shadow-soft backdrop-blur-xl ${highContrast ? 'border-slate-700 bg-slate-900' : ''}`}>
-          <div className="flex items-center gap-2 text-ember">
-            <Search size={18} />
-            <p className={`font-semibold ${highContrast ? 'text-white' : ''}`}>Try prompts like</p>
-          </div>
-          <ul className={`mt-3 space-y-2 text-sm leading-6 ${highContrast ? 'text-slate-300' : 'text-slate-600'}`}>
-            <li className="rounded-[14px] border border-slate-200 bg-slate-50 px-3 py-2">“20-minute high-protein dinner from eggs and spinach”</li>
-            <li className="rounded-[14px] border border-slate-200 bg-slate-50 px-3 py-2">“Vegan Thai curry, one pot, mild spice”</li>
-            <li className="rounded-[14px] border border-slate-200 bg-slate-50 px-3 py-2">“Use only what's in my strict list”</li>
-          </ul>
-        </section>
       </div>
     </div>
   );
