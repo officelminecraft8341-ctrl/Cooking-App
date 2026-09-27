@@ -1,11 +1,10 @@
 import express from 'express';
-import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
 
 const app = express();
-app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
 
 // ─── Config ────────────────────────────────────────────────────────────────
@@ -24,7 +23,7 @@ const VISION_MODEL = process.env.VISION_MODEL || 'qwen/qwen2.5-vl-72b-instruct';
 
 function isAllowedOrigin(origin) {
   if (!origin) return true;
-  if (ALLOWED_ORIGINS.length === 0) return true;
+  if (ALLOWED_ORIGINS.length === 0) return true; // dev default: same-origin via Vite proxy
   return ALLOWED_ORIGINS.includes(origin);
 }
 
@@ -32,9 +31,40 @@ app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (origin && isAllowedOrigin(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
+// ─── Security headers ───────────────────────────────────────────────────────
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    res.setHeader('Content-Security-Policy',
+      "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; script-src 'self'");
   }
   next();
 });
+
+// ─── Rate limiting (AI cost protection + brute-force defense) ────────────────
+const aiLimiter = rateLimit({ windowMs: 60_000, max: 20, standardHeaders: true, legacyHeaders: false,
+  message: { error: 'Too many AI requests. Try again in a minute.' } });
+const authLimiter = rateLimit({ windowMs: 15 * 60_000, max: 10, standardHeaders: true, legacyHeaders: false,
+  message: { error: 'Too many attempts. Try again later.' } });
+
+for (const route of ['/api/embed', '/api/recipes/generate', '/api/recipes/ideas', '/api/vision', '/api/chat']) {
+  app.use(route, aiLimiter);
+}
+for (const route of ['/api/auth/login', '/api/auth/signup']) {
+  app.use(route, authLimiter);
+}
 
 // ─── In-memory recipe store — per-user buckets + legacy shared bucket ─────
 let savedRecipes = []; // shared/unauthenticated bucket (pre-auth era)
@@ -55,7 +85,7 @@ const DATA_FILE = process.env.CHEFAI_DATA_FILE
 const authStore = { users: [], sessions: {} };
 
 function persistAuth() {
-  try { fs.writeFileSync(DATA_FILE, JSON.stringify(authStore, null, 2)); } catch { /* read-only fs is non-fatal */ }
+  try { fs.writeFileSync(DATA_FILE, JSON.stringify(authStore, null, 2), { mode: 0o600 }); } catch { /* read-only fs is non-fatal */ }
 }
 
 function loadAuth() {
@@ -84,18 +114,24 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 function createSession(email) {
   const token = crypto.randomBytes(32).toString('hex');
-  authStore.sessions[token] = { email, createdAt: Date.now() };
+  // Store a hash of the token, never the token itself, so a data-file leak
+  // cannot be replayed as a live session.
+  authStore.sessions[hashToken(token)] = { email, createdAt: Date.now() };
   persistAuth();
   return token;
+}
+
+function hashToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
 }
 
 function userForToken(req) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   if (!token) return null;
-  const session = authStore.sessions[token];
+  const session = authStore.sessions[hashToken(token)];
   if (!session || Date.now() - session.createdAt > SESSION_TTL_MS) {
-    if (session) { delete authStore.sessions[token]; persistAuth(); }
+    if (session) { delete authStore.sessions[hashToken(token)]; persistAuth(); }
     return null;
   }
   return authStore.users.find((u) => u.email === session.email) || null;
@@ -240,8 +276,8 @@ CRITICAL: Respond with ONLY valid JSON — no markdown fences, no commentary. St
     }
     throw lastError || new Error('Model returned unparseable response');
   } catch (error) {
-    console.error('Recipe ideas failed:', error);
-    return res.status(500).json({ error: 'Failed to brainstorm ideas. Please try again.', details: error.message });
+    console.error('Recipe ideas failed:', error.message);
+    return res.status(500).json({ error: 'Failed to brainstorm ideas. Please try again.' });
   }
 });
 
@@ -678,8 +714,8 @@ app.get('/api/auth/me', (req, res) => {
 app.post('/api/auth/logout', (req, res) => {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
-  if (token && authStore.sessions[token]) {
-    delete authStore.sessions[token];
+  if (token && authStore.sessions[hashToken(token)]) {
+    delete authStore.sessions[hashToken(token)];
     persistAuth();
   }
   res.json({ success: true });
@@ -692,8 +728,8 @@ app.delete('/api/auth/account', (req, res) => {
 
   const userEmail = user.email;
   authStore.users = authStore.users.filter((u) => u.email !== userEmail);
-  for (const [token, session] of Object.entries(authStore.sessions)) {
-    if (session.email === userEmail) delete authStore.sessions[token];
+  for (const [storedHash, session] of Object.entries(authStore.sessions)) {
+    if (session.email === userEmail) delete authStore.sessions[storedHash];
   }
   recipesByUser.delete(userEmail);
   persistAuth();
@@ -715,7 +751,9 @@ app.get('/api/health', (req, res) => {
 export default app;
 
 export function startServer(port = Number(process.env.PORT) || 3001) {
-  return app.listen(port);
+  // Loopback by default so a dev machine does not expose the API + keys to the LAN.
+  const host = process.env.HOST || '127.0.0.1';
+  return app.listen(port, host);
 }
 
 // Only auto-start when run directly (node server/index.js)
