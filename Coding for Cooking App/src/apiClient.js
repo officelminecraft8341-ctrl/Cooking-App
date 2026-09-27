@@ -89,6 +89,21 @@ export async function auth2faStatus() {
 }
 
 // ─── Per-account preference sync (appearance/accessibility/consent) ────────
+// ─── OAuth API (Google / Apple) ─────────────────────────────────────────
+// Browser is redirected to the provider and lands back on /oauth-result,
+// which relays the result to the opener and closes itself.
+export async function oauthStatus() {
+  return apiRequest('/auth/oauth/status');
+}
+
+export function oauthStartUrl(provider, mode = 'signin') {
+  return getApiUrl(`/auth/oauth/${provider}/start?mode=${mode === 'link' ? 'link' : 'signin'}`);
+}
+
+export async function oauthUnlink(provider) {
+  return apiRequest('/auth/oauth/unlink', { method: 'POST', body: { provider } });
+}
+
 export async function fetchPrefs() {
   return apiRequest('/prefs');
 }

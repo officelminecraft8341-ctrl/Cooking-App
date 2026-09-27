@@ -79,6 +79,36 @@ async function getUser(kv, email) {
 
 export { getUser as getUserByEmail };
 
+// ─── OAuth provider identity index ──────────────────────────────────────────
+// Key: provider:<provider>:<subject> → email. Keeps sign-in O(1) instead of a
+// full user scan. Written whenever an identity is attached or detached.
+function providerKey(provider, subject) {
+  return `provider:${provider}:${String(subject).slice(0, 200)}`;
+}
+
+export async function getUserByProvider(kv, provider, subject) {
+  if (!subject) return null;
+  const email = await kv.get(providerKey(provider, subject));
+  return email ? getUser(kv, email) : null;
+}
+
+export async function setUserProvider(kv, user, provider, subject) {
+  user.oauth = { ...(user.oauth || {}), [provider]: subject };
+  await putUser(kv, user);
+  await kv.put(providerKey(provider, subject), user.email);
+  return user;
+}
+
+export async function removeUserProvider(kv, user, provider) {
+  const subject = user.oauth?.[provider];
+  if (subject) await kv.delete(providerKey(provider, subject));
+  const rest = { ...(user.oauth || {}) };
+  delete rest[provider];
+  user.oauth = rest;
+  await putUser(kv, user);
+  return user;
+}
+
 export async function putUser(kv, user) { await kv.put(`user:${user.email}`, JSON.stringify(user)); }
 
 export async function signUpUser(kv, { email, password, name }) {
@@ -154,7 +184,7 @@ export async function deleteAccount(kv, user) {
 }
 
 // ─── Per-account preferences (accent, accessibility, consent) ────────────────
-export const PREF_KEYS = ['appearance', 'accessibility', 'consent', 'plan'];
+export const PREF_KEYS = ['appearance', 'accessibility', 'consent', 'plan', 'savedIdeas'];
 
 export async function getPrefs(kv, email) {
   const raw = await kv.get(`prefs:${email}`);

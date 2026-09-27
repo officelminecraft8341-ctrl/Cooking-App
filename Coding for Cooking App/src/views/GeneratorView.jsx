@@ -2,9 +2,19 @@ import { useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   Sparkles, Plus, X, ArrowRight, AlertCircle, Loader2, BookmarkPlus, Flame, Layers3,
-  BadgeCheck, TimerReset, ShieldCheck, Accessibility, Camera, ImagePlus, Wand2,
+  BadgeCheck, TimerReset, ShieldCheck, Accessibility, Camera, ImagePlus, Wand2, CalendarDays,
 } from 'lucide-react';
 import { fileToDataUrl } from '../apiClient';
+
+// Mirrors App.jsx — keep both lists in sync.
+const MEAL_TYPE_OPTIONS = [
+  { value: '', label: 'Any meal' },
+  { value: 'breakfast', label: 'Breakfast' },
+  { value: 'lunch', label: 'Lunch' },
+  { value: 'snack', label: 'Snack' },
+  { value: 'dinner', label: 'Dinner' },
+  { value: 'extra', label: 'Desserts & extras' },
+];
 
 const DIET_OPTIONS = [
   'Vegetarian', 'Vegan', 'Gluten-Free', 'Dairy-Free',
@@ -37,6 +47,11 @@ export default function GeneratorView({
   onSaveRecipe,
   onOpenDetail,
   onSendChat,
+  mealType,
+  onMealTypeChange,
+  planDate,
+  onPlanDateChange,
+  minPlanDate,
 }) {
   const {
     genIngredients, setGenIngredients,
@@ -317,6 +332,49 @@ export default function GeneratorView({
                   <option value="Hard">Hard</option>
                 </select>
               </div>
+            </div>
+
+            {/* Meal type: steers ideas + generation toward one meal */}
+            <div>
+              <span id="gen-mealtype-label" className="block text-sm font-medium text-slate-700">Meal type</span>
+              <div role="group" aria-labelledby="gen-mealtype-label" className="mt-2 flex flex-wrap gap-2">
+                {MEAL_TYPE_OPTIONS.map((option) => {
+                  const active = mealType === option.value;
+                  return (
+                    <button
+                      key={option.value || 'any'}
+                      type="button"
+                      onClick={() => onMealTypeChange(option.value)}
+                      aria-pressed={active}
+                      className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
+                        active
+                          ? 'bg-ember text-white shadow shadow-ember/30'
+                          : 'border border-slate-200 bg-slate-50 text-slate-600 hover:border-ember hover:text-ember'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Optional: drop the generated recipe straight onto the calendar */}
+            <div className="rounded-[18px] border border-slate-200 bg-slate-50 p-4">
+              <label htmlFor="gen-plan-date" className="block text-sm font-medium text-slate-700">
+                <CalendarDays size={14} className="mr-1 inline" /> Add to calendar <span className="font-normal text-slate-400">(optional)</span>
+              </label>
+              <p className="mt-1 text-xs text-slate-400">
+                Pick a day — when your recipe is generated it&apos;s planned automatically{mealType ? ` for ${mealType === 'extra' ? 'a snack' : mealType}` : ' for dinner'}.
+              </p>
+              <input
+                id="gen-plan-date"
+                type="date"
+                value={planDate}
+                min={minPlanDate}
+                onChange={(e) => onPlanDateChange(e.target.value)}
+                className="mt-2 rounded-[14px] border border-slate-200 bg-white px-4 py-2 text-sm outline-none focus:border-ember"
+              />
             </div>
 
             {/* Time + Servings */}

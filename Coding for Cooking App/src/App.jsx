@@ -1,12 +1,12 @@
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { apiRequest, authSignUp, authLogin, authLogout, authMe, auth2faSetup, auth2faEnable, auth2faDisable, auth2faStatus, fetchPrefs, pushPrefs, markSignedIn, markSignedOut } from './apiClient';
+import { apiRequest, authSignUp, authLogin, authLogout, authMe, auth2faSetup, auth2faEnable, auth2faDisable, auth2faStatus, fetchPrefs, pushPrefs, markSignedIn, markSignedOut, oauthStatus, oauthStartUrl, oauthUnlink } from './apiClient';
 import { passwordStrength, passwordProblems } from '../shared/authShared.js';
 import {
   ChefHat, Accessibility, Bell, X, Sparkles, BookOpen, Bot,
   Plus, Heart, Layers3, BadgeCheck, TimerReset, Flame, BookmarkPlus,
-  Palette, Check, Move, ArrowRight, Video, Newspaper, LogOut, UserRound, Loader2, Trash2, ShieldCheck, CalendarDays,
+  Palette, Check, Move, ArrowRight, Video, Newspaper, LogOut, UserRound, Loader2, Trash2, ShieldCheck, CalendarDays, Star,
 } from 'lucide-react';
 import LegalDocs from './LegalDocs';
 import { ConsentBanner, ConsentCheckbox, readStoredConsent } from './Consent';
@@ -50,7 +50,45 @@ const accessibilityOptionLabels = [
   { key: 'voiceGuidance', label: 'Voice guidance', description: 'Reads view changes, saves, and errors aloud.' },
 ];
 
-// ─── View definitions ─────────────────────────────────────────────────────────
+// Maps a Generate meal-type to the Calendar slot it lands in when the user
+// opts into “Add to calendar”.
+const MEAL_TYPE_SLOT = { breakfast: 'breakfast', lunch: 'lunch', snack: 'snack', dinner: 'dinner', extra: 'snack' };
+
+function todayISODate() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+// Inline brand marks (no third-party icon packages, keeps CSP tight).
+function GoogleG(props) {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" {...props}>
+      <path fill="#4285F4" d="M23.5 12.3c0-.9-.1-1.5-.3-2.2H12v4.1h6.5c-.1 1.1-.8 2.7-2.4 3.8l-.02.15 3.5 2.7.24.03c2.2-2.05 3.5-5.06 3.5-8.58z" />
+      <path fill="#34A853" d="M12 24c3.24 0 5.96-1.07 7.94-2.91l-3.78-2.93c-1.02.71-2.39 1.2-4.16 1.2-3.2 0-5.92-2.11-6.89-5.02l-.14.01-3.5 2.72-.05.13C3.39 21.3 7.37 24 12 24z" />
+      <path fill="#FBBC05" d="M5.11 14.34A6.9 6.9 0 0 1 4.74 12c0-.81.14-1.6.36-2.34l-.01-.16-3.54-2.75-.12.06A11.96 11.96 0 0 0 0 12c0 1.93.46 3.76 1.43 5.19l3.68-2.85z" />
+      <path fill="#EB4335" d="M12 4.64c2.28 0 3.82.98 4.7 1.8l3.43-3.35C17.95 1.03 15.24 0 12 0 7.37 0 3.39 2.7 1.43 6.81l3.68 2.85C6.08 6.75 8.8 4.64 12 4.64z" />
+    </svg>
+  );
+}
+
+function AppleMark(props) {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true" {...props}>
+      <path d="M17.05 12.54c-.03-2.89 2.36-4.27 2.47-4.34-1.35-1.97-3.44-2.24-4.18-2.27-1.78-.18-3.47 1.05-4.37 1.05-.9 0-2.29-1.02-3.77-1-1.94.03-3.72 1.13-4.72 2.86-2.01 3.49-.51 8.66 1.45 11.5.96 1.39 2.1 2.95 3.6 2.89 1.45-.06 1.99-.93 3.74-.93s2.24.93 3.77.9c1.56-.03 2.54-1.41 3.49-2.81 1.1-1.61 1.55-3.17 1.58-3.25-.04-.02-3.02-1.16-3.06-4.6zM14.16 4.06c.8-.97 1.34-2.32 1.19-3.66-1.15.05-2.55.77-3.38 1.74-.74.85-1.39 2.23-1.22 3.54 1.29.1 2.6-.65 3.41-1.62z" />
+    </svg>
+  );
+}
+
+const MEAL_TYPE_OPTIONS = [
+  { value: '', label: 'Any meal', icon: null },
+  { value: 'breakfast', label: 'Breakfast' },
+  { value: 'lunch', label: 'Lunch' },
+  { value: 'snack', label: 'Snack' },
+  { value: 'dinner', label: 'Dinner' },
+  { value: 'extra', label: 'Desserts & extras' },
+];
+
+// ─── View definitions ────────────────────────────────────────────────────────
 
 const VIEWS = [
   {
@@ -134,6 +172,10 @@ function App() {
   const [captchaAnswer, setCaptchaAnswer] = useState('');
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
   const [isSecurityOpen, setIsSecurityOpen] = useState(false);
+  // OAuth: which providers the SERVER has configured + which are linked to the
+  // signed-in account. Hidden entirely until env keys exist.
+  const [oauthProviders, setOauthProviders] = useState({ google: false, apple: false });
+  const [oauthLinked, setOauthLinked] = useState({ google: false, apple: false });
   const [twoFactorSetup, setTwoFactorSetup] = useState(null); // { secret, otpauth }
   const [twoFactorEnableCode, setTwoFactorEnableCode] = useState('');
   const [twoFactorBackupCodes, setTwoFactorBackupCodes] = useState(null);
@@ -165,10 +207,15 @@ function App() {
   const [genDifficulty, setGenDifficulty] = useState('Any');
   const [genStrictMode, setGenStrictMode] = useState(false);
   const [genAccessibility, setGenAccessibility] = useState('');
+  const [genMealType, setGenMealType] = useState(''); // '' | breakfast | lunch | snack | dinner | extra
+  // Optional calendar drop: when set, a generated recipe is planned here.
+  const [genPlanDate, setGenPlanDate] = useState('');
   const [customAccessibilityInput, setCustomAccessibilityInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [genError, setGenError] = useState('');
   const [recipeIdeas, setRecipeIdeas] = useState(null);
+  // Brainstorms the user starred — saved as idea cards, convertible later.
+  const [savedIdeas, setSavedIdeas] = useState([]);
   const [pendingGenRequest, setPendingGenRequest] = useState(null);
   const [isSelectingIdea, setIsSelectingIdea] = useState(false);
 
@@ -221,6 +268,65 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedView]);
 
+  // ── OAuth: discover configured providers + consume a returning result ────
+  const refreshOauthStatus = useCallback(() => {
+    oauthStatus()
+      .then((data) => {
+        if (data?.providers) setOauthProviders({ google: Boolean(data.providers.google), apple: Boolean(data.providers.apple) });
+        if (data?.linked) setOauthLinked({ google: Boolean(data.linked.google), apple: Boolean(data.linked.apple) });
+      })
+      .catch(() => { /* server unreachable — providers stay hidden */ });
+  }, []);
+
+  useEffect(() => {
+    refreshOauthStatus();
+  }, [refreshOauthStatus, authUser]);
+
+  // Consume the OAuth result written by /oauth-result (same-tab or popup).
+  useEffect(() => {
+    const consume = () => {
+      try {
+        const raw = sessionStorage.getItem('chefai-oauth-result');
+        if (!raw) return;
+        sessionStorage.removeItem('chefai-oauth-result');
+        const result = JSON.parse(raw);
+        if (Date.now() - (result.at || 0) > 60_000) return; // stale
+        if (result.success === '1') {
+          // Cookie is set; refresh session state like a normal sign-in.
+          authEpochRef.current += 1;
+          authMe().then((user) => {
+            setAuthUser(user);
+            markSignedIn();
+            setIsAuthOpen(false);
+            announce(`Signed in with ${result.via || 'your account'} as ${user.name}.`);
+            pullAccountData();
+          }).catch(() => announce('Sign-in succeeded but the session could not be verified. Please try again.'));
+        } else if (result.linked) {
+          setOauthLinked((current) => ({ ...current, [result.linked]: true }));
+          announce(`${result.linked === 'google' ? 'Google' : 'Apple'} account connected.`);
+        } else if (result.error) {
+          const friendly = {
+            email_unverified: 'Your provider email is not verified — verify it and try again.',
+            provider_linked_elsewhere: 'That provider account is already connected to a different ChefAI account.',
+            invalid_state: 'Sign-in expired. Please try again.',
+            session_expired: 'Your session expired while connecting — sign in and retry.',
+          }[result.error] || 'Social sign-in failed. Please try again.';
+          setAuthError(friendly);
+          setIsAuthOpen(true);
+          announce(friendly);
+        }
+      } catch { /* ignore malformed results */ }
+    };
+    consume();
+    window.addEventListener('storage', consume);
+    window.addEventListener('focus', consume);
+    return () => {
+      window.removeEventListener('storage', consume);
+      window.removeEventListener('focus', consume);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const shiftView = useCallback((delta) => {
     const currentIndex = VIEW_IDS.indexOf(activeView);
     const nextIndex = Math.min(VIEW_IDS.length - 1, Math.max(0, currentIndex + delta));
@@ -270,7 +376,17 @@ function App() {
     if (stored) {
       try { setSavedRecipes(JSON.parse(stored)); } catch { /* ignore */ }
     }
+    const storedIdeas = localStorage.getItem('chefai-saved-ideas');
+    if (storedIdeas) {
+      try { setSavedIdeas(JSON.parse(storedIdeas)); } catch { /* ignore */ }
+    }
   }, []);
+
+  // Starred ideas ride the same account-sync channel as prefs (part of the
+  // prefs payload, so they follow the user across devices for free).
+  useEffect(() => {
+    localStorage.setItem('chefai-saved-ideas', JSON.stringify(savedIdeas));
+  }, [savedIdeas]);
 
   // Hydrate from the server too — localStorage can be lost, the store survives
   useEffect(() => {
@@ -349,10 +465,10 @@ function App() {
     if (!authUser || !prefsSyncReadyRef.current) return undefined;
     if (pushPrefsTimerRef.current) clearTimeout(pushPrefsTimerRef.current);
     pushPrefsTimerRef.current = setTimeout(() => {
-      pushPrefs({ appearance, accessibility: accessibilitySettings }).catch(() => { /* offline; next change retries */ });
+      pushPrefs({ appearance, accessibility: accessibilitySettings, savedIdeas }).catch(() => { /* offline; next change retries */ });
     }, 1200);
     return () => { if (pushPrefsTimerRef.current) clearTimeout(pushPrefsTimerRef.current); };
-  }, [authUser, appearance, accessibilitySettings]);
+  }, [authUser, appearance, accessibilitySettings, savedIdeas]);
 
   useEffect(() => {
     const root = document.body;
@@ -443,6 +559,7 @@ function App() {
     setGenAccessibility('');
     setCustomAccessibilityInput('');
     setGenImage(null);
+    setGenMealType('');
   };
 
   const buildGenRequest = () => {
@@ -459,6 +576,7 @@ function App() {
       difficulty: genDifficulty,
       strictMode: genStrictMode,
       accessibility: finalAccessibility,
+      mealType: genMealType,
     };
   };
 
@@ -486,6 +604,7 @@ function App() {
           diet: request.diet,
           time: request.time,
           servings: request.servings,
+          mealType: request.mealType,
         },
       });
 
@@ -557,7 +676,15 @@ function App() {
       setActiveRecipe(data.recipe);
       setDetailRecipe(data.recipe);
       setIsRecipeDetailOpen(true); // Full-window recipe with tutorial links
-      announce(`Your recipe is ready: ${data.recipe.title}.`);
+      // Optional calendar hookup: plan the fresh recipe on the chosen day.
+      if (genPlanDate) {
+        const slot = MEAL_TYPE_SLOT[genMealType] || 'dinner';
+        handleChangePlan(genPlanDate, slot, { title: data.recipe.title, id: null });
+        announce(`Your recipe is ready: ${data.recipe.title}. Planned for ${slot} on ${genPlanDate}.`);
+        setGenPlanDate('');
+      } else {
+        announce(`Your recipe is ready: ${data.recipe.title}.`);
+      }
     } catch (error) {
       setGenError(error.message || 'Something went wrong. Please try again.');
       announce(error.message || 'Generating the recipe failed. Please try again.');
@@ -569,6 +696,58 @@ function App() {
   const handleDismissIdeas = () => {
     setRecipeIdeas(null);
     setPendingGenRequest(null);
+  };
+
+  // Star an idea card: keeps the brainstorm for later. In Saved, the user can
+  // turn it into a full recipe with the original request preserved.
+  const handleStarIdea = (idea) => {
+    const entry = {
+      id: `idea-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      title: idea.title,
+      description: idea.description || '',
+      complexity: idea.complexity || 'Intermediate',
+      time: idea.time || '',
+      keyTwist: idea.keyTwist || '',
+      request: pendingGenRequest || null, // original form state for full generation
+      savedAt: new Date().toISOString(),
+    };
+    setSavedIdeas((current) => current.some((i) => i.title === entry.title) ? current : [...current, entry]);
+    announce(`Saved "${entry.title}" to your ideas. Find it in Saved to turn it into a full recipe.`);
+  };
+
+  // Saved → “Cook this idea”: regenerate from the stored brainstorm + request.
+  const handleCookSavedIdea = async (savedIdea) => {
+    if (isSelectingIdea) return;
+    setIsSelectingIdea(true);
+    setGenError('');
+    try {
+      const request = savedIdea.request || { ingredients: [], cuisines: [], diet: '', time: savedIdea.time || '', servings: 2, difficulty: 'Any', strictMode: false, accessibility: '' };
+      const data = await apiRequest('/recipes/generate', {
+        method: 'POST',
+        body: {
+          ...request,
+          idea: { ideaId: 'saved', ideaTitle: savedIdea.title, ideaComplexity: savedIdea.complexity, ideaTwist: savedIdea.keyTwist },
+        },
+      });
+      if (!data.recipe) throw new Error(data.error || 'Failed to generate recipe');
+      // The idea has served its purpose — promote it to a real recipe.
+      setSavedIdeas((current) => current.filter((i) => i.id !== savedIdea.id));
+      setActiveRecipe(data.recipe);
+      setDetailRecipe(data.recipe);
+      setIsRecipeDetailOpen(true);
+      announce(`Your recipe is ready: ${data.recipe.title}.`);
+    } catch (error) {
+      setGenError(error.message || 'Generating the recipe failed. Please try again.');
+      announce(error.message || 'Generating the recipe failed. Please try again.');
+      setIsRecipeDetailOpen(false);
+      setDetailRecipe(null);
+    } finally {
+      setIsSelectingIdea(false);
+    }
+  };
+
+  const handleDeleteSavedIdea = (ideaId) => {
+    setSavedIdeas((current) => current.filter((i) => i.id !== ideaId));
   };
 
   const handleModifyRecipe = async (action, target, message = '') => {
@@ -738,6 +917,14 @@ function App() {
       if (prefs?.appearance?.accent) setAppearance({ ...defaultAppearance, ...prefs.appearance });
       if (prefs?.accessibility) setAccessibilitySettings({ ...defaultAccessibilitySettings, ...prefs.accessibility });
       if (prefs?.plan && typeof prefs.plan === 'object') setPlan((current) => ({ ...current, ...prefs.plan }));
+      if (Array.isArray(prefs?.savedIdeas) && prefs.savedIdeas.length > 0) {
+        setSavedIdeas((current) => {
+          const seen = new Set(current.map((i) => i.title));
+          const merged = [...current];
+          prefs.savedIdeas.forEach((i) => { if (i?.title && !seen.has(i.title)) merged.push(i); });
+          return merged;
+        });
+      }
       prefsSyncReadyRef.current = true;
     }).catch(() => { prefsSyncReadyRef.current = true; });
   };
@@ -817,6 +1004,17 @@ function App() {
   };
 
   // ── 2FA management (Security panel) ─────────────────────────────────
+  const handleOauthUnlink = async (provider) => {
+    try {
+      await oauthUnlink(provider);
+      setOauthLinked((current) => ({ ...current, [provider]: false }));
+      setSecurityMessage(provider === 'google' ? 'Google disconnected.' : 'Apple disconnected.');
+      announce(provider === 'google' ? 'Google account disconnected.' : 'Apple account disconnected.');
+    } catch (error) {
+      setSecurityMessage(error.message || 'Could not disconnect that account.');
+    }
+  };
+
   const openSecurity = async () => {
     setIsSecurityOpen(true);
     setSecurityMessage('');
@@ -1159,16 +1357,24 @@ function App() {
                   onSaveRecipe={handleSaveRecipe}
                   onOpenDetail={() => { setDetailRecipe(activeRecipe); setIsRecipeDetailOpen(true); }}
                   onSendChat={() => navigateToView('chat')}
+                  mealType={genMealType}
+                  onMealTypeChange={setGenMealType}
+                  planDate={genPlanDate}
+                  onPlanDateChange={setGenPlanDate}
+                  minPlanDate={todayISODate()}
                 />
               )}
               {activeView === 'saved' && (
                 <SavedView
                   savedRecipes={savedRecipes}
+                  savedIdeas={savedIdeas}
                   accessibilitySettings={accessibilitySettings}
                   onOpenRecipe={handleOpenRecipeDetail}
                   onDeleteSaved={handleDeleteSaved}
                   onToggleFavorite={handleToggleFavorite}
                   onNavigate={navigateToView}
+                  onCookIdea={handleCookSavedIdea}
+                  onDeleteIdea={handleDeleteSavedIdea}
                 />
               )}
               {activeView === 'calendar' && (
@@ -1243,11 +1449,20 @@ function App() {
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: index * 0.08, duration: 0.35 }}
                       whileHover={reduceMotionEnabled ? undefined : { y: -6 }}
-                      className="dark-glass group flex flex-col rounded-[26px] p-6 text-left transition disabled:cursor-wait disabled:opacity-70"
+                      className="dark-glass group relative flex flex-col rounded-[26px] p-6 text-left transition disabled:cursor-wait disabled:opacity-70"
                     >
                       <span className={`inline-flex w-fit items-center gap-1.5 rounded-full bg-gradient-to-r ${complexityStyles[idea.complexity] || complexityStyles.Intermediate} px-3 py-1 text-xs font-bold uppercase tracking-wider text-white`}>
                         {idea.complexity || 'Intermediate'}
                       </span>
+                      <button
+                        type="button"
+                        onClick={(event) => { event.stopPropagation(); handleStarIdea(idea); }}
+                        aria-label={`Save "${idea.title}" for later`}
+                        title="Save this idea for later"
+                        className="absolute right-4 top-4 rounded-full border border-white/15 bg-white/10 p-2 text-white/80 transition hover:scale-110 hover:bg-white/20 hover:text-amber-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300"
+                      >
+                        <Star size={15} aria-hidden="true" />
+                      </button>
                       <h3 className="mt-4 text-xl font-semibold text-white">{idea.title}</h3>
                       <p className="mt-2 flex-1 text-sm leading-6 text-white/70">{idea.description}</p>
                       {idea.keyTwist && (
@@ -1632,6 +1847,35 @@ function App() {
                 </button>
               </form>
 
+              {/* ── Social sign-in: only shown when the server is configured ── */}
+              {(oauthProviders.google || oauthProviders.apple) && (
+                <>
+                  <div className="my-4 flex items-center gap-3" aria-hidden="true">
+                    <span className="h-px flex-1 bg-slate-200" />
+                    <span className="text-xs font-medium uppercase tracking-wide text-slate-400">or continue with</span>
+                    <span className="h-px flex-1 bg-slate-200" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    {oauthProviders.google && (
+                      <a
+                        href={oauthStartUrl('google')}
+                        className="flex items-center justify-center gap-2 rounded-[16px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
+                      >
+                        <GoogleG aria-hidden="true" /> Google
+                      </a>
+                    )}
+                    {oauthProviders.apple && (
+                      <a
+                        href={oauthStartUrl('apple')}
+                        className="flex items-center justify-center gap-2 rounded-[16px] bg-black px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+                      >
+                        <AppleMark aria-hidden="true" /> Apple
+                      </a>
+                    )}
+                  </div>
+                </>
+              )}
+
               {authMode === 'signup' && (
                 <p className="mt-2 text-center text-[11px] leading-snug text-slate-500">
                   By creating an account you consent to the documents above. Read them first:
@@ -1782,6 +2026,58 @@ function App() {
               )}
 
               {securityMessage && <p role="status" className="mt-3 text-sm text-slate-600">{securityMessage}</p>}
+
+              {/* ── Connected accounts: multi sign-in per account ────────── */}
+              {(oauthProviders.google || oauthProviders.apple) && (
+                <div className="mt-5 border-t border-slate-200 pt-4">
+                  <p className="text-sm font-semibold text-slate-700">Connected accounts</p>
+                  <p className="mt-0.5 text-xs text-slate-500">Sign in with these even without your password.</p>
+                  <div className="mt-3 space-y-2">
+                    {oauthProviders.google && (
+                      <div className="flex items-center justify-between gap-2 rounded-[16px] border border-slate-200 bg-slate-50 px-3 py-2">
+                        <span className="flex items-center gap-2 text-sm text-slate-700"><GoogleG /> Google {oauthLinked.google && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">connected</span>}</span>
+                        {oauthLinked.google ? (
+                          <button
+                            type="button"
+                            onClick={() => handleOauthUnlink('google')}
+                            className="rounded-full border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 transition hover:border-red-300 hover:text-red-500"
+                          >
+                            Disconnect
+                          </button>
+                        ) : (
+                          <a
+                            href={oauthStartUrl('google', 'link')}
+                            className="rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white transition hover:bg-slate-700"
+                          >
+                            Connect
+                          </a>
+                        )}
+                      </div>
+                    )}
+                    {oauthProviders.apple && (
+                      <div className="flex items-center justify-between gap-2 rounded-[16px] border border-slate-200 bg-slate-50 px-3 py-2">
+                        <span className="flex items-center gap-2 text-sm text-slate-700"><AppleMark /> Apple {oauthLinked.apple && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">connected</span>}</span>
+                        {oauthLinked.apple ? (
+                          <button
+                            type="button"
+                            onClick={() => handleOauthUnlink('apple')}
+                            className="rounded-full border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 transition hover:border-red-300 hover:text-red-500"
+                          >
+                            Disconnect
+                          </button>
+                        ) : (
+                          <a
+                            href={oauthStartUrl('apple', 'link')}
+                            className="rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white transition hover:bg-slate-700"
+                          >
+                            Connect
+                          </a>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </motion.div>
           </motion.div>
         )}

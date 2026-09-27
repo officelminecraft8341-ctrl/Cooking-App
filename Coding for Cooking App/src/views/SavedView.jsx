@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Star, Trash2, Plus, Heart, Clock3, Search, Sparkles, AlertCircle } from 'lucide-react';
+import { Star, Trash2, Plus, Heart, Clock3, Search, Sparkles, AlertCircle, ChefHat, X, ArrowRight } from 'lucide-react';
 import { searchRecipes } from '../semanticSearch';
 
-export default function SavedView({ savedRecipes, onOpenRecipe, onDeleteSaved, onToggleFavorite, onNavigate, accessibilitySettings }) {
+export default function SavedView({ savedRecipes, savedIdeas = [], onOpenRecipe, onDeleteSaved, onToggleFavorite, onNavigate, accessibilitySettings, onCookIdea, onDeleteIdea }) {
   const highContrast = accessibilitySettings.highContrast;
 
   const [query, setQuery] = useState('');
@@ -197,6 +197,64 @@ export default function SavedView({ savedRecipes, onOpenRecipe, onDeleteSaved, o
                 </div>
               </motion.article>
             ))}
+          </div>
+        )}
+
+        {/* ── Starred AI brainstorms → turn into full recipes ─────────────── */}
+        {savedIdeas.length > 0 && (
+          <div className="mt-6">
+            <div className="flex items-center gap-2">
+              <Sparkles size={16} className="text-ember" />
+              <h3 className={`text-sm font-semibold uppercase tracking-wide ${highContrast ? 'text-slate-200' : 'text-slate-500'}`}>
+                AI recipe drafts ({savedIdeas.length})
+              </h3>
+            </div>
+            <p className={`mt-1 text-xs ${highContrast ? 'text-slate-300' : 'text-slate-400'}`}>
+              Brainstorms you starred in Generate. Cook one to build the full recipe.
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {savedIdeas.map((idea) => (
+                <motion.article
+                  key={idea.id}
+                  layout
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className={`relative flex flex-col rounded-[22px] border border-dashed p-4 ${
+                    highContrast ? 'border-slate-500 bg-slate-800' : 'border-ember/40 bg-ember/5'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onDeleteIdea(idea.id)}
+                    aria-label={`Discard draft ${idea.title}`}
+                    className={`absolute right-3 top-3 rounded-full p-1 transition ${highContrast ? 'text-slate-400 hover:text-red-300' : 'text-slate-300 hover:text-red-400'}`}
+                  >
+                    <X size={14} />
+                  </button>
+                  <p className={`inline-flex w-fit items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider ${
+                    idea.complexity === 'Simple' ? 'bg-emerald-100 text-emerald-700' : idea.complexity === 'Ambitious' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'
+                  }`}>
+                    <ChefHat size={11} /> {idea.complexity}
+                  </p>
+                  <h4 className={`mt-2 pr-6 font-semibold ${highContrast ? 'text-white' : 'text-slate-900'}`}>{idea.title}</h4>
+                  {idea.description && (
+                    <p className={`mt-1 line-clamp-2 text-sm leading-5 ${highContrast ? 'text-slate-300' : 'text-slate-500'}`}>{idea.description}</p>
+                  )}
+                  <div className="mt-auto flex items-center justify-between gap-2 pt-3">
+                    <span className={`flex items-center gap-1 text-xs ${highContrast ? 'text-slate-300' : 'text-slate-400'}`}>
+                      <Clock3 size={12} /> {idea.time || '—'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onCookIdea(idea)}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-ember px-3 py-1.5 text-xs font-medium text-white transition hover:bg-ember/90"
+                    >
+                      Cook this <ArrowRight size={12} />
+                    </button>
+                  </div>
+                </motion.article>
+              ))}
+            </div>
           </div>
         )}
       </section>

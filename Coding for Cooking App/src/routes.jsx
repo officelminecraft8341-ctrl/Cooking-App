@@ -1,5 +1,5 @@
-import { Routes, Route, Link } from 'react-router-dom';
-import { lazy, Suspense } from 'react';
+import { Routes, Route, Link, useLocation } from 'react-router-dom';
+import { lazy, Suspense, useEffect } from 'react';
 
 // Code-split every top-level route: each view ships in its own chunk, so the
 // initial bundle stays small (audit item: "massive JS bundles").
@@ -32,12 +32,48 @@ function NotFound() {
   );
 }
 
+// OAuth providers redirect here inside the SAME tab (no popups to block).
+// The hash carries the result; we relay it to the app tab via sessionStorage
+// + storage events, then jump the user back into the app.
+function OauthResult() {
+  const location = useLocation();
+  useEffect(() => {
+    const hash = window.location.hash.replace(/^#/, '');
+    const params = new URLSearchParams(hash);
+    try {
+      sessionStorage.setItem('chefai-oauth-result', JSON.stringify({
+        ...Object.fromEntries(params.entries()),
+        at: Date.now(),
+      }));
+      // Wake any other ChefAI tab (the main app) up.
+      window.dispatchEvent(new StorageEvent('storage', { key: 'chefai-oauth-result' }));
+    } catch { /* storage unavailable */ }
+    // If this tab IS the app tab (same-tab flow), go home; the app reads the
+    // result on focus. Otherwise close the popup.
+    if (window.opener && window.opener !== window) {
+      try { window.opener.postMessage('chefai-oauth-complete', window.location.origin); } catch { /* cross-origin */ }
+      window.close();
+    } else {
+      window.location.replace('/?view=home');
+    }
+  }, [location]);
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-slate-100" role="status" aria-label="Completing sign-in">
+      <div className="text-center">
+        <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-orange-200 border-t-orange-500" />
+        <p className="mt-4 text-sm font-medium text-slate-600">Finishing sign-in…</p>
+      </div>
+    </main>
+  );
+}
+
 export default function AppRoutes() {
   return (
     <Suspense fallback={<RouteFallback />}>
       <Routes>
         <Route path="/" element={<App />} />
         <Route path="/recipe/:recipeName" element={<RecipePage />} />
+        <Route path="/oauth-result" element={<OauthResult />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </Suspense>

@@ -4,6 +4,16 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import {
+  oauthConfig,
+  providerConfigured,
+  createState,
+  verifyState,
+  googleAuthUrl,
+  appleAuthUrl,
+  exchangeGoogle,
+  exchangeApple,
+} from '../shared/oauthShared.js';
+import {
   passwordProblems,
   isBreachedPassword,
   generateTotpSecret,
@@ -305,6 +315,15 @@ app.post('/api/embed', async (req, res) => {
   }
 });
 
+// Meal-type focus lines for ideas + generation (Generate view mode).
+const MEAL_TYPE_PROMPTS = {
+  breakfast: 'All concepts must be BREAKFAST dishes — morning-appropriate, egg/pancake/granola/savory-breakfast territory.',
+  lunch: 'All concepts must be LUNCH dishes — satisfying midday meals, lighter than dinner, quick enough for a lunch break.',
+  snack: 'All concepts must be SNACKS or small bites — finger foods, dips, toast, quick bites under 20 minutes.',
+  dinner: 'All concepts must be DINNER dishes — hearty, main-course evening meals.',
+  extra: 'All concepts must be DESSERTS, drinks, or fun extras — sweet treats, beverages, or experimental bites.',
+};
+
 // ─── POST /api/recipes/ideas — 3 dish concepts across a complexity range ────
 app.post('/api/recipes/ideas', async (req, res) => {
   const {
@@ -314,10 +333,13 @@ app.post('/api/recipes/ideas', async (req, res) => {
     diet = '',
     time = '',
     servings = 2,
+    mealType = '',
   } = req.body || {};
 
-  const ingredientsList = ingredients.length > 0 ? ingredients.join(', ') : prompt || 'whatever you think is best';
+  const safeIngredientsIdeas = Array.isArray(ingredients) ? ingredients : [];
+  const ingredientsList = safeIngredientsIdeas.length > 0 ? safeIngredientsIdeas.join(', ') : prompt || 'whatever you think is best';
   const cuisineList = cuisines.length > 0 ? cuisines.join(' and ') : '';
+  const mealLine = MEAL_TYPE_PROMPTS[mealType] || '';
 
   try {
     let lastError = null;
@@ -325,8 +347,7 @@ app.post('/api/recipes/ideas', async (req, res) => {
       const content = await callAI([
         {
           role: 'system',
-          content: `You are ChefAI, a creative culinary director. Given a set of constraints, propose exactly 3 distinct dish concepts that range in complexity: one SIMPLE (beginner-friendly, minimal technique), one INTERMEDIATE (moderate technique), and one AMBITIOUS (impressive, multi-technique showstopper). Each must satisfy the user's constraints.
-
+          content: `You are ChefAI, a creative culinary director. Given a set of constraints, propose exactly 3 distinct dish concepts that range in complexity: one SIMPLE (beginner-friendly, minimal technique), one INTERMEDIATE (moderate technique), and one AMBITIOUS (impressive, multi-technique showstopper). Each must satisfy the user's constraints.${mealLine ? `\n\nMEAL TYPE FOCUS: ${mealLine}` : ''}
 CRITICAL: Respond with ONLY valid JSON — no markdown fences, no commentary. Structure:
 {
   "ideas": [
@@ -387,6 +408,7 @@ app.post('/api/recipes/generate', async (req, res) => {
     accessibility = '',
     modifyRequest = null, // { action, target, message, existingRecipe }
     imageIngredients = null, // { images: [dataURL], note?: string } — photo → auto-find recipe
+    mealType = '', // breakfast | lunch | snack | dinner | extra — steer idea + recipe generation
   } = req.body;
 
   let systemPrompt = `You are ChefAI, an elite culinary expert and nutritionist. Your job is to generate complete, realistic, exceptionally detailed, and delicious recipes. 
@@ -469,6 +491,11 @@ Modification requested: `;
 Title: ${ideaTitle}
 Complexity target: ${ideaComplexity || 'as proposed'}
 What makes it special: ${ideaTwist || 'as proposed'}`;
+    }
+
+    const genMealLine = MEAL_TYPE_PROMPTS[mealType];
+    if (genMealLine) {
+      systemPrompt += `\n\nMEAL TYPE FOCUS: ${genMealLine}`;
     }
 
     if (strictMode) {
@@ -718,7 +745,7 @@ app.get('/api/recipes', (req, res) => {
 // Synced so a user's look & feel follows the account across devices. Stored
 // per email alongside recipes; deleted with the account (GDPR erasure).
 // (prefsByUser is declared with authStore above so loadAuth can hydrate it.)
-const PREF_KEYS = ['appearance', 'accessibility', 'consent', 'plan'];
+const PREF_KEYS = ['appearance', 'accessibility', 'consent', 'plan', 'savedIdeas'];
 
 function prefsFor(req) {
   const user = userForToken(req);
@@ -1033,6 +1060,143 @@ app.delete('/api/auth/account', (req, res) => {
   persistAuth();
   clearSessionCookie(res);
   res.json({ success: true, deleted: userEmail });
+});
+
+
+// ─── OAuth: Google + Apple sign-in & account linking ────────────────────────
+// Providers are optional: without client credentials configured, /start says
+// so plainly and the UI hides the buttons. Identity lives on the user record
+// as { provider: subject } entries — one account can hold several providers.
+
+function oauthPepper() {
+  return API_KEY || 'chefai-oauth-pepper';
+}
+
+function findUserByProvider(provider, subject) {
+  return authStore.users.find((u) => u.oauth?.[provider] === subject) || null;
+}
+
+function providerStatus(user) {
+  return {
+    google: Boolean(user?.oauth?.google),
+    apple: Boolean(user?.oauth?.apple),
+  };
+}
+
+function oauthRedirect(res, params) {
+  const query = new URLSearchParams(params).toString();
+  res.redirect(302, `/oauth-result#${query}`);
+}
+
+app.get('/api/auth/oauth/status', (req, res) => {
+  const user = userForToken(req);
+  const cfg = oauthConfig(process.env);
+  res.json({
+    providers: {
+      google: providerConfigured(cfg, 'google'),
+      apple: providerConfigured(cfg, 'apple'),
+    },
+    linked: user ? providerStatus(user) : null,
+  });
+});
+
+for (const provider of ['google', 'apple']) {
+  app.get(`/api/auth/oauth/${provider}/start`, (req, res) => {
+    const cfg = oauthConfig(process.env);
+    if (!providerConfigured(cfg, provider)) {
+      return res.status(501).json({ error: `${provider} sign-in is not configured on this server` });
+    }
+    const user = userForToken(req);
+    // Signed-in user → link mode; anonymous → sign-in mode.
+    const mode = user ? 'link' : 'signin';
+    createState(oauthPepper(), provider, mode, user?.email || '').then((stateValue) => {
+      const url = provider === 'google' ? googleAuthUrl(cfg, stateValue) : appleAuthUrl(cfg, stateValue);
+      res.redirect(302, url);
+    }).catch(() => res.status(500).json({ error: 'Could not start sign-in' }));
+  });
+
+  const handleCallback = async (req, res) => {
+    try {
+      const cfg = oauthConfig(process.env);
+      if (!providerConfigured(cfg, provider)) {
+        return oauthRedirect(res, { error: `${provider}_not_configured` });
+      }
+      // Apple posts the code (form_post); Google sends it as a query param.
+      const code = req.method === 'POST' ? req.body?.code : req.query.code;
+      const state = req.method === 'POST' ? req.body?.state : req.query.state;
+      if (!code || !state) return oauthRedirect(res, { error: 'missing_code' });
+
+      const stateInfo = await verifyState(oauthPepper(), state, provider);
+      if (!stateInfo) return oauthRedirect(res, { error: 'invalid_state' });
+
+      const identity = provider === 'google' ? await exchangeGoogle(cfg, code) : await exchangeApple(cfg, code, process.env.APPLE_KEY_ID);
+      if (!identity.emailVerified) return oauthRedirect(res, { error: 'email_unverified' });
+
+      let user;
+      if (stateInfo.mode === 'link') {
+        // Attaching a provider to the currently signed-in account.
+        user = authStore.users.find((u) => u.email === stateInfo.linkingEmail);
+        if (!user) return oauthRedirect(res, { error: 'session_expired' });
+        const clash = findUserByProvider(provider, identity.providerSubject);
+        if (clash && clash.email !== user.email) return oauthRedirect(res, { error: 'provider_linked_elsewhere' });
+        user.oauth = { ...(user.oauth || {}), [provider]: identity.providerSubject };
+        persistAuth();
+        oauthRedirect(res, { linked: provider, email: user.email });
+        return;
+      }
+
+      // Sign-in mode: find by provider identity first, then by verified email.
+      user = findUserByProvider(provider, identity.providerSubject)
+        || authStore.users.find((u) => u.email === identity.email);
+
+      if (!user) {
+        // Auto-provision a ChefAI account from the provider profile.
+        user = {
+          email: identity.email,
+          name: identity.name || identity.email.split('@')[0],
+          createdAt: new Date().toISOString(),
+          passwordHash: null, // OAuth-only account
+          oauth: { [provider]: identity.providerSubject },
+          ageConfirmed: true,
+        };
+        authStore.users.push(user);
+        recipesByUser.set(user.email, savedRecipes.map((r) => ({ ...r })));
+        persistAuth();
+        logAuthEvent('oauth-provisioned', { account: redactEmail(user.email), provider });
+      }
+
+      // Keep the subject fresh (it can rotate per provider policy).
+      user.oauth = { ...(user.oauth || {}), [provider]: identity.providerSubject };
+      persistAuth();
+
+      loginGuardSuccess(loginGuardKey(req, user.email));
+      const token = createSession(user.email);
+      setSessionCookie(res, token);
+      oauthRedirect(res, { success: '1', email: user.email });
+    } catch (error) {
+      console.error(`OAuth ${provider} callback failed:`, error.message);
+      oauthRedirect(res, { error: 'oauth_failed' });
+    }
+  };
+
+  app.get(`/api/auth/oauth/${provider}/callback`, handleCallback);
+  app.post(`/api/auth/oauth/${provider}/callback`, express.urlencoded({ extended: false }), handleCallback);
+}
+
+app.post('/api/auth/oauth/unlink', (req, res) => {
+  const user = requireUser(req, res);
+  if (!user) return;
+  const { provider } = req.body || {};
+  if (!['google', 'apple'].includes(provider)) return res.status(400).json({ error: 'Unknown provider' });
+  if (!user.oauth?.[provider]) return res.status(400).json({ error: 'That provider is not linked' });
+  // Guard: never leave an OAuth-only account with zero credentials.
+  if (!user.passwordHash && Object.keys(user.oauth).length <= 1) {
+    return res.status(400).json({ error: 'Set a password first — otherwise you could not sign in' });
+  }
+  delete user.oauth[provider];
+  persistAuth();
+  logAuthEvent('oauth-unlinked', { account: redactEmail(user.email), provider });
+  res.json({ success: true, linked: providerStatus(user) });
 });
 
 // ─── Health check ────────────────────────────────────────────────────────────

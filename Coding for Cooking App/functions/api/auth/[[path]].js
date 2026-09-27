@@ -29,7 +29,20 @@ import {
   getUserByEmail,
   putUser,
   verifyPassword,
+  getUserByProvider,
+  setUserProvider,
+  removeUserProvider,
 } from '../../lib/backend.js';
+import {
+  oauthConfig,
+  providerConfigured,
+  createState,
+  verifyState,
+  googleAuthUrl,
+  appleAuthUrl,
+  exchangeGoogle,
+  exchangeApple,
+} from '../../shared/oauthShared.js';
 
 // Routes: POST /api/auth/signup | /api/auth/login | /api/auth/logout
 //         POST /api/auth/2fa/setup|enable|disable, GET /api/auth/2fa/status
@@ -245,6 +258,116 @@ export async function onRequest(context) {
       if (!user) return jsonResponse({ error: 'Not signed in' }, { status: 401, request, env });
       await deleteAccount(env.CHEFAI_KV, user);
       return jsonResponse({ success: true, deleted: user.email }, { request, env, setCookie: clearSessionCookie() });
+    }
+
+    // ─── OAuth: Google + Apple sign-in / account linking ────────────────────
+    if (action === 'oauth/status' && request.method === 'GET') {
+      const cfg = oauthConfig(env);
+      const user = await userForToken(request, env.CHEFAI_KV);
+      return jsonResponse({
+        providers: {
+          google: providerConfigured(cfg, 'google'),
+          apple: providerConfigured(cfg, 'apple'),
+        },
+        linked: user ? {
+          google: Boolean(user.oauth?.google),
+          apple: Boolean(user.oauth?.apple),
+        } : null,
+      }, { request, env });
+    }
+
+    if (action.startsWith('oauth/unlink') && request.method === 'POST') {
+      const user = await userForToken(request, env.CHEFAI_KV);
+      if (!user) return jsonResponse({ error: 'Not signed in' }, { status: 401, request, env });
+      const body = await readJson(request, { maxBytes: 2000 });
+      const provider = body.provider === 'google' || body.provider === 'apple' ? body.provider : null;
+      if (!provider) return jsonResponse({ error: 'Unknown provider' }, { status: 400, request, env });
+      if (!user.oauth?.[provider]) return jsonResponse({ error: 'That account is not connected' }, { status: 400, request, env });
+      if (!user.passwordHash && Object.keys(user.oauth).length <= 1) {
+        return jsonResponse({ error: 'Set a password before disconnecting your only sign-in method' }, { status: 400, request, env });
+      }
+      await removeUserProvider(env.CHEFAI_KV, user, provider);
+      logAuthEvent('oauth-unlinked', { account: redactEmail(user.email), provider });
+      return jsonResponse({ linked: { google: Boolean(user.oauth?.google), apple: Boolean(user.oauth?.apple) } }, { request, env });
+    }
+
+    const oauthMatch = action.match(/^oauth\/(google|apple)\/(start|callback)$/);
+    if (oauthMatch) {
+      const [, provider, phase] = oauthMatch;
+      const cfg = oauthConfig(env);
+      const pepper = env.OPENAI_API_KEY || 'chefai-oauth-pepper';
+      // Provider redirects land here full-page; results go to the SPA hash
+      // route, which notifies the opener window and closes itself.
+      const oauthRedirect = (params) => {
+        const query = new URLSearchParams(params).toString();
+        return new Response(null, { status: 302, headers: { Location: `/oauth-result#${query}`, 'Cache-Control': 'no-store' } });
+      };
+      try {
+        if (!providerConfigured(cfg, provider)) {
+          return phase === 'start'
+            ? jsonResponse({ error: `${provider} sign-in is not configured on this server` }, { status: 501, request, env })
+            : oauthRedirect({ error: `${provider}_not_configured` });
+        }
+        if (phase === 'start') {
+          const startUrl = new URL(request.url);
+          const mode = startUrl.searchParams.get('mode') === 'link' ? 'link' : 'signin';
+          if (mode === 'link') {
+            const user = await userForToken(request, env.CHEFAI_KV);
+            if (!user) return jsonResponse({ error: 'Sign in to connect an account' }, { status: 401, request, env });
+            var linkingEmail = user.email;
+          } else {
+            var linkingEmail = '';
+          }
+          const stateValue = await createState(pepper, provider, mode, linkingEmail);
+          const authUrl = provider === 'google' ? googleAuthUrl(cfg, stateValue) : appleAuthUrl(cfg, stateValue);
+          return new Response(null, { status: 302, headers: { Location: authUrl, 'Cache-Control': 'no-store' } });
+        }
+        // Callback phase (GET redirect from provider, or POST for Apple's form post)
+        const callbackUrl = new URL(request.url);
+        const code = callbackUrl.searchParams.get('code') || (request.method === 'POST' ? (await request.formData()).get('code') : null);
+        const state = callbackUrl.searchParams.get('state') || (request.method === 'POST' ? (await request.formData()).get('state') : null);
+        if (!code || !state) return oauthRedirect({ error: 'missing_code' });
+        const stateInfo = await verifyState(pepper, String(state), provider);
+        if (!stateInfo) return oauthRedirect({ error: 'invalid_state' });
+        const identity = provider === 'google' ? await exchangeGoogle(cfg, String(code)) : await exchangeApple(cfg, String(code), env.APPLE_KEY_ID);
+        if (!identity.emailVerified) return oauthRedirect({ error: 'email_unverified' });
+
+        let user;
+        if (stateInfo.mode === 'link') {
+          user = await getUserByEmail(env.CHEFAI_KV, stateInfo.linkingEmail);
+          if (!user) return oauthRedirect({ error: 'session_expired' });
+          const clash = await getUserByProvider(env.CHEFAI_KV, provider, identity.providerSubject);
+          if (clash && clash.email !== user.email) return oauthRedirect({ error: 'provider_linked_elsewhere' });
+          await setUserProvider(env.CHEFAI_KV, user, provider, identity.providerSubject);
+          return oauthRedirect({ linked: provider, email: user.email });
+        }
+
+        user = (await getUserByProvider(env.CHEFAI_KV, provider, identity.providerSubject))
+          || (await getUserByEmail(env.CHEFAI_KV, identity.email));
+        if (!user) {
+          user = {
+            email: identity.email,
+            name: identity.name || identity.email.split('@')[0],
+            createdAt: new Date().toISOString(),
+            passwordHash: null,
+            oauth: {},
+            ageConfirmed: true,
+          };
+          await putUser(env.CHEFAI_KV, user);
+          logAuthEvent('oauth-provisioned', { account: redactEmail(user.email), provider });
+        }
+        await setUserProvider(env.CHEFAI_KV, user, provider, identity.providerSubject);
+        loginGuardSuccess(`${identity.email}|${ip}`);
+        const token = await createSession(env.CHEFAI_KV, user.email);
+        // The 302 to the SPA must carry the session cookie.
+        const dest = `/oauth-result#${new URLSearchParams({ success: '1', email: user.email }).toString()}`;
+        return new Response(null, { status: 302, headers: { Location: dest, 'Cache-Control': 'no-store', 'Set-Cookie': sessionCookie(token) } });
+      } catch (error) {
+        console.error(`OAuth ${provider} ${phase} failed:`, error.message);
+        return phase === 'start'
+          ? jsonResponse({ error: 'Could not start sign-in' }, { status: 500, request, env })
+          : oauthRedirect({ error: 'oauth_failed' });
+      }
     }
 
     return jsonResponse({ error: 'Not found' }, { status: 404, request, env });
