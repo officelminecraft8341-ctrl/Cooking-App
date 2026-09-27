@@ -80,13 +80,25 @@ const DOCS = {
       {
         h: '9. Security',
         p: [
-          'Passwords are hashed with scrypt and a per-user random salt. Sessions use random 32-byte tokens. Traffic runs over HTTP locally; when deployed publicly, the operator must serve the app over HTTPS.',
+          'Passwords are hashed (scrypt locally, PBKDF2-100k on Cloudflare) with a per-user random salt. Sign-in sessions use httpOnly, SameSite=Strict cookies — they are never stored where JavaScript can read them. Old bearer tokens in browser storage are wiped automatically. Tokens are stored server-side only as hashes. Login is protected by rate limiting, per-account lockout with exponential backoff, and a captcha after repeated failures. Two-factor authentication (TOTP + single-use backup codes) is available to every account.',
+        ],
+      },
+      {
+        h: '9a. No session recording or behavioral tracking',
+        p: [
+          'ChefAI does not use session replay, heatmaps, screen recording, mouse-tracking, or behavioral analytics of any kind — and our Content-Security-Policy blocks these script categories at the browser level. Form fields are never recorded; there is no third party to mask them from.',
+        ],
+      },
+      {
+        h: '9b. Email and messaging',
+        p: [
+          'ChefAI does not send marketing or promotional email and has no mailing list. There is nothing to unsubscribe from. If transactional email is ever introduced (for example password resets), every message will include a working unsubscribe mechanism and the operator\'s physical postal address, as CAN-SPAM requires.',
         ],
       },
       {
         h: '10. Children',
         p: [
-          'ChefAI is not directed at children under 13 (or 16 in the EEA). We do not knowingly collect their data. If you believe a child has created an account, contact the operator to have it removed.',
+          'ChefAI is not directed at children under 13 (or 16 in the EEA). Signup includes an affirmative age confirmation, and accounts for users under 13 are rejected. We do not knowingly collect children\'s data. If you believe a child has created an account, contact the operator to have it removed.',
         ],
       },
       {
@@ -157,6 +169,14 @@ const DOCS = {
           'These Terms are for a personal, non-commercial project. Any dispute will first be addressed by contacting the operator. Nothing here limits rights you have under mandatory consumer law in your country.',
         ],
       },
+      {
+        h: '10. Copyright policy (DMCA)',
+        p: [
+          'ChefAI generates original recipe text and does not host user-uploaded copyrighted media. Recipes generated for you are created by AI from your prompts and are provided for personal use.',
+          'If you believe content available through the Service infringes your copyright, send a takedown notice to the designated agent below with: (1) identification of the copyrighted work, (2) the URL or description of the infringing material, (3) your contact information, (4) a good-faith statement that the use is unauthorized, (5) a statement, under penalty of perjury, that the information is accurate and you are the owner or authorized to act for the owner, and (6) your physical or electronic signature.',
+          'Designated DMCA agent: the operator of this site (see the contact address in the Privacy Policy). Valid notices will be acted on promptly, and the affected party will be told how to file a counter-notice.',
+        ],
+      },
     ],
   },
   cookies: {
@@ -168,13 +188,14 @@ const DOCS = {
         h: 'Do we use cookies?',
         p: [
           'No tracking cookies. No advertising cookies. No analytics cookies.',
-          'ChefAI sets zero HTTP cookies. All "storage" below is browser localStorage, used only for things the app cannot function without — equivalent to strictly necessary cookies, which do not require consent under GDPR/ePrivacy because you asked for the service that uses them.',
+          'ChefAI sets exactly one HTTP cookie: chefai_session, which keeps you signed in. It is strictly necessary (no consent required under GDPR/ePrivacy because you asked for the service that uses it), HttpOnly so JavaScript can never read or steal it, SameSite=Strict so other sites cannot use it against you, and it expires after 30 days.',
+          'Everything else listed below is browser localStorage, used only for things the app cannot function without — equivalent to strictly necessary storage.',
         ],
       },
       {
         h: 'What we store and why',
         list: [
-          ['chefai-auth', 'Your session token and basic profile — keeps you signed in. Necessary.'],
+          ['chefai_session (cookie)', 'Keeps you signed in. HttpOnly, SameSite=Strict, 30-day expiry. Strictly necessary.'],
           ['chefai-saved-recipes', 'Recipes generated before you sign in, so they are not lost. Necessary.'],
           ['chefai-appearance-settings', 'Your chosen color theme and liquid-glass preference. Functional preference.'],
           ['chefai-accessibility-settings', 'Your accessibility toggles (high contrast, large text, etc.). Functional preference.'],

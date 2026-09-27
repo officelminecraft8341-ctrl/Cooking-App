@@ -1,6 +1,6 @@
 const defaultBase = import.meta.env?.VITE_API_BASE_URL || '/api';
 
-export const AUTH_STORAGE_KEY = 'chefai-auth';
+export const AUTH_STORAGE_KEY = 'chefai-auth'; // legacy key, cleaned up on boot
 
 export function getApiUrl(path = '') {
   const normalizedBase = defaultBase.replace(/\/+$/, '');
@@ -8,30 +8,30 @@ export function getApiUrl(path = '') {
   return `${normalizedBase}${normalizedPath}`;
 }
 
+// ─── Session: httpOnly cookie only — the token is never readable by JS ──────
+// (XSS cannot steal what JS cannot see). Any pre-cookie localStorage token is
+// wiped on load so no bearer tokens linger in storage.
+let hasSession = false;
+try {
+  localStorage.removeItem(AUTH_STORAGE_KEY);
+  localStorage.removeItem('chefai-auth-v2');
+} catch { /* storage unavailable (private mode) */ }
+
 export function readStoredAuth() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY));
-    return parsed?.token && parsed?.user ? parsed : null;
-  } catch {
-    return null;
-  }
+  // Sessions are cookie-based now; this reports the optimistic in-memory flag.
+  return hasSession ? { user: null } : null;
 }
 
-function storeAuth(auth) {
-  if (auth?.token && auth?.user) {
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(auth));
-  } else {
-    localStorage.removeItem(AUTH_STORAGE_KEY);
-  }
-}
+export function markSignedIn() { hasSession = true; }
+export function markSignedOut() { hasSession = false; }
 
 export async function apiRequest(path, { method = 'GET', body, headers = {}, ...options } = {}) {
-  const stored = readStoredAuth();
   const response = await fetch(getApiUrl(path), {
     method,
+    // Cookie rides along automatically (SameSite=Strict, httpOnly).
+    credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
-      ...(stored?.token ? { Authorization: `Bearer ${stored.token}` } : {}),
       ...headers,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -41,37 +41,51 @@ export async function apiRequest(path, { method = 'GET', body, headers = {}, ...
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    // A rejected token means the session is gone — drop it so the UI resets.
-    if (response.status === 401 && stored?.token && !path.startsWith('/auth/')) {
-      storeAuth(null);
-    }
-    throw new Error(data.error || 'Request failed');
+    if (response.status === 401) markSignedOut();
+    throw Object.assign(new Error(data.error || 'Request failed'), { status: response.status, data });
   }
-
   return data;
 }
 
 // ─── Auth API ───────────────────────────────────────────────────────────────
-export async function authSignUp({ email, password, name }) {
-  const data = await apiRequest('/auth/signup', { method: 'POST', body: { email, password, name } });
-  storeAuth({ token: data.token, user: data.user });
+// Error objects carry .data so the UI can react to 2FA challenges, captchas,
+// and lockouts without string matching.
+export async function authSignUp({ email, password, name, ageConfirmed, ageYears }) {
+  const data = await apiRequest('/auth/signup', { method: 'POST', body: { email, password, name, ageConfirmed, ageYears } });
+  markSignedIn();
   return data.user;
 }
 
-export async function authLogin({ email, password }) {
-  const data = await apiRequest('/auth/login', { method: 'POST', body: { email, password } });
-  storeAuth({ token: data.token, user: data.user });
-  return data.user;
+export async function authLogin({ email, password, totp, backupCode, challenge, captchaId, captchaAnswer }) {
+  const data = await apiRequest('/auth/login', { method: 'POST', body: { email, password, totp, backupCode, challenge, captchaId, captchaAnswer } });
+  markSignedIn();
+  return data;
 }
 
 export async function authLogout() {
   try { await apiRequest('/auth/logout', { method: 'POST' }); } catch { /* best-effort */ }
-  storeAuth(null);
+  markSignedOut();
 }
 
 export async function authMe() {
   const data = await apiRequest('/auth/me');
   return data.user;
+}
+
+export async function auth2faSetup() {
+  return apiRequest('/auth/2fa/setup', { method: 'POST' });
+}
+
+export async function auth2faEnable(code) {
+  return apiRequest('/auth/2fa/enable', { method: 'POST', body: { totp: code } });
+}
+
+export async function auth2faDisable(password) {
+  return apiRequest('/auth/2fa/disable', { method: 'POST', body: { password } });
+}
+
+export async function auth2faStatus() {
+  return apiRequest('/auth/2fa/status');
 }
 
 // ─── Vision API (photo → ingredients / photo → dish) ───────────────────────

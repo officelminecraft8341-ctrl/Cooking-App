@@ -55,8 +55,15 @@ export async function createSession(kv, email) {
 }
 
 export async function userForToken(request, kv) {
-  const header = request.headers.get('authorization') || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  // Session lives in an httpOnly cookie (never exposed to JS/XSS); the
+  // Authorization header remains only as a deprecated migration path.
+  const cookie = request.headers.get('cookie') || '';
+  const pair = cookie.split(/;\s*/).find((c) => c.startsWith('chefai_session='));
+  let token = pair ? decodeURIComponent(pair.slice('chefai_session='.length)) : '';
+  if (!token) {
+    const header = request.headers.get('authorization') || '';
+    token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  }
   if (!token) return null;
   const raw = await kv.get(tokenHash(token));
   if (!raw) return null;
@@ -70,7 +77,9 @@ async function getUser(kv, email) {
   return raw ? JSON.parse(raw) : null;
 }
 
-async function putUser(kv, user) { await kv.put(`user:${user.email}`, JSON.stringify(user)); }
+export { getUser as getUserByEmail };
+
+export async function putUser(kv, user) { await kv.put(`user:${user.email}`, JSON.stringify(user)); }
 
 export async function signUpUser(kv, { email, password, name }) {
   const normalized = String(email || '').trim().toLowerCase();
@@ -82,7 +91,7 @@ export async function signUpUser(kv, { email, password, name }) {
   const legacy = await kv.get(`recipes:__anonymous__`);
   const seed = legacy ? JSON.parse(legacy) : [];
 
-  const user = { email: normalized, name: String(name || '').trim() || normalized.split('@')[0], passwordHash: await hashPassword(String(password)), createdAt: Date.now() };
+  const user = { email: normalized, name: String(name || '').trim() || normalized.split('@')[0], passwordHash: await hashPassword(String(password)), createdAt: Date.now(), ageConfirmed: true };
   await putUser(kv, user);
   if (seed.length) {
     await kv.put(`recipes:${normalized}`, JSON.stringify(seed));
@@ -91,14 +100,44 @@ export async function signUpUser(kv, { email, password, name }) {
   return { email: user.email, name: user.name, createdAt: user.createdAt };
 }
 
-export async function loginUser(kv, { email, password }) {
+// Hardened login: password check, optional TOTP/backup-code second step with a
+// short-lived signed challenge bound to the account's password hash.
+export async function loginUser(kv, { email, password, totp, backupCode, challenge }) {
   const normalized = String(email || '').trim().toLowerCase();
   const user = await getUser(kv, normalized);
   if (!user || !(await verifyPassword(String(password || ''), user.passwordHash))) {
     throw httpError(401, 'Incorrect email or password');
   }
+  const publicUserData = { email: user.email, name: user.name, createdAt: user.createdAt, twoFactorEnabled: Boolean(user.totp?.enabled) };
+
+  if (user.totp?.enabled) {
+    if (challenge) {
+      if (!(await verifyChallenge(challenge, user.passwordHash, normalized))) {
+        throw httpError(401, 'Sign-in session expired — start again');
+      }
+      const codeOk = totp && (await verifyTotp(user.totp.secret, totp));
+      let backupOk = false;
+      if (!codeOk && backupCode) {
+        const hashed = await hashBackupCode(normalizeBackupCode(backupCode));
+        const idx = (user.totp.backupCodes || []).indexOf(hashed);
+        if (idx !== -1) {
+          user.totp.backupCodes.splice(idx, 1); // single use
+          await putUser(kv, user);
+          backupOk = true;
+        }
+      }
+      if (!codeOk && !backupOk) throw httpError(401, 'That code is not valid');
+      const token = await createSession(kv, normalized);
+      return { token, user: publicUserData };
+    }
+    return {
+      requiresChallenge: true,
+      body: { requiresChallenge: true, challenge: await createChallenge(normalized, user.passwordHash) },
+    };
+  }
+
   const token = await createSession(kv, normalized);
-  return { token, user: { email: user.email, name: user.name, createdAt: user.createdAt } };
+  return { token, user: publicUserData };
 }
 
 export async function deleteAccount(kv, user) {
@@ -134,7 +173,7 @@ export function httpError(status, message) {
 // ─── JSON response helpers + CORS + security headers ─────────────────────────
 const ALLOWED_ORIGIN_SUFFIXES = ['.pages.dev'];
 
-export function jsonResponse(data, { status = 200, request, env } = {}) {
+export function jsonResponse(data, { status = 200, request, env, setCookie } = {}) {
   const headers = {
     'content-type': 'application/json',
     'X-Content-Type-Options': 'nosniff',
@@ -142,6 +181,7 @@ export function jsonResponse(data, { status = 200, request, env } = {}) {
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Permissions-Policy': 'camera=(self), microphone=(), geolocation=()',
   };
+  if (setCookie) headers['Set-Cookie'] = setCookie;
   const origin = request?.headers.get('origin');
   if (origin) {
     const hostname = new URL(origin).hostname;
@@ -230,6 +270,28 @@ export function parseDataImages(rawImages) {
     return url;
   });
 }
+
+// ─── Shared auth policy (password rules, TOTP, backup codes, guards) ─────────
+export {
+  passwordProblems,
+  isBreachedPassword,
+  generateTotpSecret,
+  totpCode,
+  verifyTotp,
+  otpauthUri,
+  generateBackupCodes,
+  hashBackupCode,
+  normalizeBackupCode,
+  createChallenge,
+  verifyChallenge,
+  ensureCaptchaKey,
+  makeCaptcha,
+  verifyCaptcha,
+  loginGuardCheck,
+  loginGuardFail,
+  loginGuardSuccess,
+  redactEmail,
+} from '../../shared/authShared.js';
 
 export function visionContent(text, images) {
   const parts = [{ type: 'text', text }];

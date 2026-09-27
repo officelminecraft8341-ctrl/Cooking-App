@@ -1,11 +1,12 @@
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { apiRequest, authSignUp, authLogin, authLogout, authMe, readStoredAuth } from './apiClient';
+import { apiRequest, authSignUp, authLogin, authLogout, authMe, auth2faSetup, auth2faEnable, auth2faDisable, auth2faStatus, markSignedIn, markSignedOut } from './apiClient';
+import { passwordStrength, passwordProblems } from '../shared/authShared.js';
 import {
   ChefHat, Accessibility, Bell, X, Sparkles, BookOpen, Bot,
   Plus, Heart, Layers3, BadgeCheck, TimerReset, Flame, BookmarkPlus,
-  Palette, Check, Move, ArrowRight, Video, Newspaper, LogOut, UserRound, Loader2, Trash2,
+  Palette, Check, Move, ArrowRight, Video, Newspaper, LogOut, UserRound, Loader2, Trash2, ShieldCheck,
 } from 'lucide-react';
 import LegalDocs from './LegalDocs';
 import { ConsentBanner, ConsentCheckbox, readStoredConsent } from './Consent';
@@ -107,7 +108,8 @@ function App() {
   const [autoSaveNotice, setAutoSaveNotice] = useState('');
   const [isWindowDragArmed, setIsWindowDragArmed] = useState(false);
 
-  // Auth — real accounts via /api/auth/*, session persisted in localStorage
+  // Auth — real accounts via /api/auth/*, session persisted in an httpOnly
+  // cookie (never in JS-readable storage). 2FA + captcha state lives here too.
   const [authUser, setAuthUser] = useState(null);
   const [authMode, setAuthMode] = useState('signin'); // 'signin' | 'signup'
   const [authName, setAuthName] = useState('');
@@ -116,6 +118,19 @@ function App() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [signupConsent, setSignupConsent] = useState(false);
+  const [ageConfirmed, setAgeConfirmed] = useState(false);
+  const [ageYears, setAgeYears] = useState('');
+  const [totpCode, setTotpCode] = useState('');
+  const [pendingChallenge, setPendingChallenge] = useState(null); // { challenge }
+  const [captcha, setCaptcha] = useState(null); // { id, question }
+  const [captchaAnswer, setCaptchaAnswer] = useState('');
+  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
+  const [isSecurityOpen, setIsSecurityOpen] = useState(false);
+  const [twoFactorSetup, setTwoFactorSetup] = useState(null); // { secret, otpauth }
+  const [twoFactorEnableCode, setTwoFactorEnableCode] = useState('');
+  const [twoFactorBackupCodes, setTwoFactorBackupCodes] = useState(null);
+  const [twoFactorDisablePassword, setTwoFactorDisablePassword] = useState('');
+  const [securityMessage, setSecurityMessage] = useState('');
 
   // Legal + consent
   const [activeDoc, setActiveDoc] = useState(null); // null | 'privacy' | 'terms' | 'cookies' | 'refund'
@@ -263,12 +278,17 @@ function App() {
     return () => { cancelled = true; };
   }, []);
 
-  // Restore a signed-in session from localStorage and re-validate the token
+  // Restore a signed-in session: the httpOnly cookie is the source of truth,
+  // /auth/me decides whether it is still valid.
+  // Bumped whenever the user signs in/out so a slow in-flight /auth/me from
+  // mount time can never clobber a newer session state.
+  const authEpochRef = useRef(0);
+
   useEffect(() => {
-    const stored = readStoredAuth();
-    if (!stored) return;
-    setAuthUser(stored.user);
-    authMe().then((user) => setAuthUser(user)).catch(() => setAuthUser(null)); // token expired → drop
+    const epoch = authEpochRef.current;
+    authMe()
+      .then((user) => { if (epoch === authEpochRef.current) { setAuthUser(user); markSignedIn(); } })
+      .catch(() => { if (epoch === authEpochRef.current) { setAuthUser(null); markSignedOut(); } });
   }, []);
 
   useEffect(() => {
@@ -631,6 +651,39 @@ function App() {
   };
 
   // ── Auth ──────────────────────────────────────────────────────────────────
+  const applyAuthError = (error) => {
+    const data = error?.data || {};
+    if (data.requiresChallenge) setPendingChallenge({ challenge: data.challenge });
+    if (data.captcha) { setCaptcha(data.captcha); setCaptchaAnswer(''); }
+    else if (!data.requiresChallenge) { setCaptcha(null); setCaptchaAnswer(''); }
+    setAuthError(error?.message || 'Could not sign you in. Please try again.');
+  };
+
+  const resetAuthForm = () => {
+    setPassword('');
+    setTotpCode('');
+    setPendingChallenge(null);
+    setCaptcha(null);
+    setCaptchaAnswer('');
+    setAgeConfirmed(false);
+    setAgeYears('');
+    setAuthName('');
+    setSignupConsent(false);
+  };
+
+  const completeSignIn = (user, isNew) => {
+    authEpochRef.current += 1;
+    setAuthUser(user);
+    markSignedIn();
+    setTwoFactorEnabled(Boolean(user?.twoFactorEnabled));
+    setIsAuthOpen(false);
+    announce(`Signed in${isNew ? '' : ' back'}. Welcome, ${user.name}.`);
+    setMessages((current) => [
+      ...current,
+      { role: 'assistant', content: `Welcome${isNew ? '' : ' back'}, ${user.name}! Ready to cook something great today?` },
+    ]);
+  };
+
   const handleAuthSubmit = async (event) => {
     event.preventDefault();
     if (!email.trim() || !password || isAuthBusy) return;
@@ -638,37 +691,103 @@ function App() {
       setAuthError('Please agree to the Terms & Privacy Policy to create an account.');
       return;
     }
+    if (authMode === 'signup' && !ageConfirmed) {
+      setAuthError('Please confirm your age to continue.');
+      return;
+    }
 
     setIsAuthBusy(true);
     setAuthError('');
     try {
-      const user = authMode === 'signup'
-        ? await authSignUp({ email: email.trim(), password, name: authName.trim() })
-        : await authLogin({ email: email.trim(), password });
-      setAuthUser(user);
-      setPassword('');
-      setAuthName('');
-      setSignupConsent(false);
-      setIsAuthOpen(false);
-      setMessages((current) => [
-        ...current,
-        { role: 'assistant', content: `Welcome${authMode === 'signup' ? '' : ' back'}, ${user.name}! Ready to cook something great today?` },
-      ]);
+      if (authMode === 'signup') {
+        const user = await authSignUp({
+          email: email.trim(),
+          password,
+          name: authName.trim(),
+          ageConfirmed,
+          ageYears: ageYears ? Number(ageYears) : undefined,
+        });
+        resetAuthForm();
+        completeSignIn(user, true);
+        return;
+      }
+
+      // Sign-in: the server drives captcha → password → 2FA challenges.
+      const result = await authLogin({
+        email: email.trim(),
+        password,
+        challenge: pendingChallenge?.challenge || undefined,
+        totp: totpCode || undefined,
+        captchaId: captcha?.id,
+        captchaAnswer: captcha ? captchaAnswer : undefined,
+      });
+      resetAuthForm();
+      completeSignIn(result.user, false);
     } catch (error) {
-      setAuthError(error.message || 'Could not sign you in. Please try again.');
+      applyAuthError(error);
     } finally {
       setIsAuthBusy(false);
     }
   };
 
   const handleSignOut = async () => {
+    authEpochRef.current += 1;
     await authLogout();
     setAuthUser(null);
+    markSignedOut();
+    setTwoFactorEnabled(false);
     setIsAuthOpen(false);
     setMessages((current) => [
       ...current,
       { role: 'assistant', content: 'Signed out. Your saved recipes are waiting for you next time!' },
     ]);
+  };
+
+  // ── 2FA management (Security panel) ─────────────────────────────────
+  const openSecurity = async () => {
+    setIsSecurityOpen(true);
+    setSecurityMessage('');
+    try {
+      const status = await auth2faStatus();
+      setTwoFactorEnabled(Boolean(status.enabled));
+    } catch { /* panel still opens; status defaults to off */ }
+  };
+
+  const startTwoFactorSetup = async () => {
+    setSecurityMessage('');
+    try {
+      const setup = await auth2faSetup();
+      setTwoFactorSetup(setup);
+    } catch (error) {
+      setSecurityMessage(error.message);
+    }
+  };
+
+  const confirmTwoFactorSetup = async () => {
+    setSecurityMessage('');
+    try {
+      const result = await auth2faEnable(twoFactorEnableCode);
+      setTwoFactorEnabled(true);
+      setTwoFactorBackupCodes(result.backupCodes);
+      setTwoFactorSetup(null);
+      setTwoFactorEnableCode('');
+      announce('Two-factor authentication enabled.');
+    } catch (error) {
+      setSecurityMessage(error.message);
+    }
+  };
+
+  const disableTwoFactor = async () => {
+    setSecurityMessage('');
+    try {
+      await auth2faDisable(twoFactorDisablePassword);
+      setTwoFactorEnabled(false);
+      setTwoFactorBackupCodes(null);
+      setTwoFactorDisablePassword('');
+      announce('Two-factor authentication disabled.');
+    } catch (error) {
+      setSecurityMessage(error.message);
+    }
   };
 
   const openAuth = (mode) => {
@@ -681,6 +800,7 @@ function App() {
   // Delete account: erases the user, their sessions, and all saved recipes
   const handleDeleteAccount = async () => {
     if (!window.confirm('Delete your account? This erases your profile and ALL saved recipes immediately and cannot be undone.')) return;
+    authEpochRef.current += 1;
     try {
       await apiRequest('/auth/account', { method: 'DELETE' });
       setAuthUser(null);
@@ -832,6 +952,14 @@ function App() {
                 title={`Signed in as ${authUser.email}`}
               >
                 <LogOut size={16} />
+              </button>
+              <button
+                className="rounded-full border border-slate-200 bg-white/80 p-2 text-slate-600 transition hover:border-ember hover:text-ember"
+                onClick={openSecurity}
+                aria-label="Open security settings"
+                title="Security: two-factor authentication"
+              >
+                <ShieldCheck size={16} />
               </button>
               <button
                 className="rounded-full border border-slate-200 bg-white/80 p-2 text-slate-600 transition hover:border-red-300 hover:text-red-600"
@@ -1297,14 +1425,97 @@ function App() {
                     aria-label="Password"
                     type="password"
                     required
-                    minLength={authMode === 'signup' ? 8 : 1}
+                    minLength={authMode === 'signup' ? 12 : 1}
                     autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder={authMode === 'signup' ? 'At least 8 characters' : ''}
+                    placeholder={authMode === 'signup' ? 'At least 12 characters' : ''}
                     className="mt-2 w-full rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-ember"
                   />
                 </label>
+
+                {authMode === 'signup' && password && (() => {
+                  const strength = passwordStrength(password);
+                  const problems = passwordProblems(password, { email });
+                  const colors = ['bg-red-400', 'bg-red-400', 'bg-amber-400', 'bg-lime-500', 'bg-emerald-500'];
+                  return (
+                    <div aria-live="polite">
+                      <div className="flex gap-1" aria-hidden="true">
+                        {[0, 1, 2, 3, 4].map((i) => (
+                          <span key={i} className={`h-1.5 flex-1 rounded-full ${i < strength.score ? colors[strength.score] : 'bg-slate-200'}`} />
+                        ))}
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">{strength.label || 'Enter a password'}
+                        {problems.length > 0 && <span className="text-slate-400"> — {problems.join(', ')}</span>}
+                      </p>
+                    </div>
+                  );
+                })()}
+
+                {authMode === 'signup' && (
+                  <div className="space-y-2 rounded-[18px] border border-amber-200 bg-amber-50/70 p-3">
+                    <label className="block text-sm font-medium text-slate-700">
+                      Your age
+                      <input
+                        aria-label="Your age"
+                        type="number"
+                        min={5}
+                        max={120}
+                        inputMode="numeric"
+                        value={ageYears}
+                        onChange={(e) => setAgeYears(e.target.value)}
+                        placeholder="e.g. 16"
+                        className="mt-2 w-full rounded-[14px] border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-ember"
+                      />
+                    </label>
+                    <label className="flex items-start gap-2 text-xs text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={ageConfirmed}
+                        onChange={(e) => setAgeConfirmed(e.target.checked)}
+                        className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-ember"
+                      />
+                      <span>I confirm I am 13 years of age or older. ChefAI is not directed to children under 13 (COPPA).</span>
+                    </label>
+                  </div>
+                )}
+
+                {captcha && authMode === 'signin' && (
+                  <div className="rounded-[18px] border border-slate-200 bg-slate-50 p-3">
+                    <label className="block text-sm font-medium text-slate-700">
+                      Security check
+                      <input
+                        aria-label={`Security check: ${captcha.question}`}
+                        type="number"
+                        inputMode="numeric"
+                        value={captchaAnswer}
+                        onChange={(e) => setCaptchaAnswer(e.target.value)}
+                        placeholder={captcha.question}
+                        className="mt-2 w-full rounded-[14px] border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-ember"
+                      />
+                    </label>
+                  </div>
+                )}
+
+                {pendingChallenge && (
+                  <div className="rounded-[18px] border border-ember/30 bg-ember/5 p-3">
+                    <label className="block text-sm font-medium text-slate-700">
+                      Two-factor code
+                      <input
+                        aria-label="Two-factor authentication code"
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        maxLength={11}
+                        value={totpCode}
+                        onChange={(e) => setTotpCode(e.target.value)}
+                        placeholder="6-digit code or backup code"
+                        className="mt-2 w-full rounded-[14px] border border-slate-200 bg-white px-4 py-2.5 text-sm tracking-widest outline-none focus:border-ember"
+                      />
+                    </label>
+                    <p className="mt-1 text-xs text-slate-500">Enter the code from your authenticator app, or one of your backup codes.</p>
+                  </div>
+                )}
 
                 {authMode === 'signup' && (
                   <ConsentCheckbox checked={signupConsent} onChange={setSignupConsent} error={authError && authError.startsWith('Please agree') ? authError : ''} />
@@ -1346,6 +1557,134 @@ function App() {
                   {authMode === 'signup' ? 'Sign in' : 'Create one free'}
                 </button>
               </p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Security Panel (2FA) ─────────────────────────────────────────── */}
+      <AnimatePresence>
+        {isSecurityOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4 backdrop-blur-sm"
+            onClick={() => setIsSecurityOpen(false)}
+          >
+            <motion.div
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 20, opacity: 0 }}
+              role="dialog"
+              aria-label="Security settings"
+              className="w-full max-w-md rounded-[30px] border border-white/70 bg-white p-6 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-slate-500">Security</p>
+                  <h2 className="text-2xl font-semibold text-slate-900">Two-factor authentication</h2>
+                </div>
+                <button type="button" onClick={() => setIsSecurityOpen(false)} className="rounded-full border border-slate-200 p-2 text-slate-600" aria-label="Close security settings">
+                  <X size={18} />
+                </button>
+              </div>
+
+              {twoFactorBackupCodes && (
+                <div className="mt-4 rounded-[18px] border border-emerald-200 bg-emerald-50 p-4">
+                  <p className="text-sm font-semibold text-emerald-800">Save your backup codes now</p>
+                  <p className="mt-1 text-xs text-emerald-700">Each code works once, instead of a 2FA code. They are shown only this once.</p>
+                  <div className="mt-2 grid grid-cols-2 gap-1 font-mono text-xs text-emerald-900">
+                    {twoFactorBackupCodes.map((code) => <span key={code}>{code}</span>)}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { navigator.clipboard?.writeText(twoFactorBackupCodes.join('\n')); setSecurityMessage('Backup codes copied to clipboard.'); }}
+                    className="mt-3 rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
+                  >
+                    Copy codes
+                  </button>
+                </div>
+              )}
+
+              {!twoFactorEnabled && !twoFactorSetup && (
+                <div className="mt-4">
+                  <p className="text-sm text-slate-600">
+                    Add a second step to sign-in using any authenticator app (Google Authenticator, Authy, 1Password). Even if your password leaks, your account stays safe.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={startTwoFactorSetup}
+                    className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-ember px-4 py-2.5 font-medium text-white shadow shadow-ember/30 transition hover:bg-ember/90"
+                  >
+                    <ShieldCheck size={16} /> Set up 2FA
+                  </button>
+                </div>
+              )}
+
+              {twoFactorSetup && (
+                <div className="mt-4 space-y-3">
+                  <p className="text-sm text-slate-600">1. Add this secret to your authenticator app (manual entry):</p>
+                  <code className="block break-all rounded-[14px] bg-slate-100 px-3 py-2 font-mono text-xs text-slate-800" aria-label="Two-factor secret">{twoFactorSetup.secret}</code>
+                  <details className="text-xs text-slate-500">
+                    <summary className="cursor-pointer">Or paste the otpauth:// URI into your app</summary>
+                    <code className="mt-1 block break-all rounded-[14px] bg-slate-50 px-3 py-2 font-mono">{twoFactorSetup.otpauth}</code>
+                  </details>
+                  <label className="block text-sm font-medium text-slate-700">
+                    2. Enter the 6-digit code it shows
+                    <input
+                      aria-label="Authenticator code"
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={6}
+                      autoComplete="one-time-code"
+                      value={twoFactorEnableCode}
+                      onChange={(e) => setTwoFactorEnableCode(e.target.value)}
+                      placeholder="123456"
+                      className="mt-2 w-full rounded-[14px] border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm tracking-widest outline-none focus:border-ember"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={confirmTwoFactorSetup}
+                    disabled={twoFactorEnableCode.length !== 6}
+                    className="flex w-full items-center justify-center rounded-full bg-ember px-4 py-2.5 font-medium text-white shadow shadow-ember/30 transition hover:bg-ember/90 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Enable 2FA
+                  </button>
+                </div>
+              )}
+
+              {twoFactorEnabled && !twoFactorBackupCodes && (
+                <div className="mt-4 space-y-3">
+                  <p className="flex items-center gap-2 text-sm font-medium text-emerald-700"><BadgeCheck size={16} /> 2FA is active on your account.</p>
+                  <details className="text-sm">
+                    <summary className="cursor-pointer text-slate-600">Turn 2FA off</summary>
+                    <label className="mt-2 block text-sm font-medium text-slate-700">
+                      Confirm your password to disable
+                      <input
+                        aria-label="Password to disable two-factor"
+                        type="password"
+                        autoComplete="current-password"
+                        value={twoFactorDisablePassword}
+                        onChange={(e) => setTwoFactorDisablePassword(e.target.value)}
+                        className="mt-2 w-full rounded-[14px] border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-ember"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={disableTwoFactor}
+                      disabled={!twoFactorDisablePassword}
+                      className="mt-2 rounded-full bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Disable 2FA
+                    </button>
+                  </details>
+                </div>
+              )}
+
+              {securityMessage && <p role="status" className="mt-3 text-sm text-slate-600">{securityMessage}</p>}
             </motion.div>
           </motion.div>
         )}

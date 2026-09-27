@@ -133,8 +133,11 @@ describe('ChefAI app shell', () => {
       if (String(url).includes('/auth/login')) {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ token: 'test-token', user: { email: body.email, name: 'Chef' } }),
+          json: () => Promise.resolve({ user: { email: body.email, name: 'Chef' } }),
         });
+      }
+      if (String(url).includes('/auth/me')) {
+        return Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({ error: 'Not signed in' }) });
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
     }));
@@ -148,7 +151,8 @@ describe('ChefAI app shell', () => {
 
     await waitFor(() => expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument());
     expect(screen.getByText('Chef')).toBeInTheDocument();
-    expect(JSON.parse(localStorage.getItem('chefai-auth'))).toMatchObject({ token: 'test-token' });
+    // Sessions are httpOnly cookies now — no token may ever land in JS storage.
+    expect(localStorage.getItem('chefai-auth')).toBeNull();
   });
 
   it('creates an account, signs out, and returns to the signed-out header', async () => {
@@ -157,8 +161,11 @@ describe('ChefAI app shell', () => {
       if (String(url).includes('/auth/signup')) {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ token: 'new-token', user: { email: body.email, name: body.name } }),
+          json: () => Promise.resolve({ user: { email: body.email, name: body.name } }),
         });
+      }
+      if (String(url).includes('/auth/me')) {
+        return Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({ error: 'Not signed in' }) });
       }
       if (String(url).includes('/auth/logout')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true }) });
@@ -173,6 +180,8 @@ describe('ChefAI app shell', () => {
     fireEvent.change(screen.getByLabelText(/name/i), { target: { value: 'Ahaan' } });
     fireEvent.change(screen.getByLabelText(/email/i), { target: { value: 'ahaan@example.com' } });
     fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'super-secret-9' } });
+    fireEvent.change(screen.getByLabelText(/your age/i), { target: { value: '16' } });
+    fireEvent.click(screen.getByLabelText(/i am 13 years of age or older/i));
     fireEvent.click(screen.getByLabelText(/i agree to the terms/i));
     fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 

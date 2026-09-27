@@ -3,9 +3,32 @@ import rateLimit from 'express-rate-limit';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
+import {
+  passwordProblems,
+  isBreachedPassword,
+  generateTotpSecret,
+  totpCode,
+  verifyTotp,
+  otpauthUri,
+  generateBackupCodes,
+  hashBackupCode,
+  normalizeBackupCode,
+  verifyChallenge,
+  createChallenge,
+  ensureCaptchaKey,
+  makeCaptcha,
+  verifyCaptcha,
+  loginGuardCheck,
+  loginGuardFail,
+  loginGuardSuccess,
+  redactEmail,
+} from '../shared/authShared.js';
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
+app.set('trust proxy', 1);
+
+const IS_PROD = process.env.NODE_ENV === 'production';
 
 // ─── Config ────────────────────────────────────────────────────────────────
 const API_KEY = process.env.OPENAI_API_KEY || process.env.AI_API_KEY || '';
@@ -47,8 +70,50 @@ app.use((req, res, next) => {
   res.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
   if (process.env.NODE_ENV === 'production') {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    // Fonts are self-hosted (public/fonts) — no third-party origins at all.
     res.setHeader('Content-Security-Policy',
-      "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'; script-src 'self'");
+      "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+  }
+  next();
+});
+
+// ─── Session cookie helpers (httpOnly — never exposed to JS/XSS) ────────────
+const SESSION_COOKIE = 'chefai_session';
+const SESSION_COOKIE_MAX_AGE = 30 * 24 * 60 * 60; // matches SESSION_TTL_MS
+
+function setSessionCookie(res, token) {
+  res.setHeader('Set-Cookie',
+    `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_COOKIE_MAX_AGE}${IS_PROD ? '; Secure' : ''}`);
+}
+
+function clearSessionCookie(res) {
+  res.setHeader('Set-Cookie',
+    `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${IS_PROD ? '; Secure' : ''}`);
+}
+
+function tokenFromRequest(req) {
+  const cookie = req.headers.cookie || '';
+ const pair = cookie.split(/;\s*/).find((c) => c.startsWith(`${SESSION_COOKIE}=`));
+  if (pair) return decodeURIComponent(pair.slice(SESSION_COOKIE.length + 1));
+  // Deprecated transport kept only for API clients during the migration window.
+  const header = req.headers.authorization || '';
+  return header.startsWith('Bearer ') ? header.slice(7) : '';
+}
+
+// ─── CSRF defense-in-depth (SameSite=Strict is the primary layer) ───────────
+// Every state-changing /api request must originate from this site. Browsers
+// always attach Origin on cross-site POSTs; curl/API clients omit it.
+app.use('/api', (req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  const origin = req.headers.origin;
+  if (!origin) return next(); // non-browser client
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  try {
+    if (new URL(origin).host !== host) {
+      return res.status(403).json({ error: 'Cross-origin request blocked' });
+    }
+  } catch {
+    return res.status(403).json({ error: 'Cross-origin request blocked' });
   }
   next();
 });
@@ -56,15 +121,25 @@ app.use((req, res, next) => {
 // ─── Rate limiting (AI cost protection + brute-force defense) ────────────────
 const aiLimiter = rateLimit({ windowMs: 60_000, max: 20, standardHeaders: true, legacyHeaders: false,
   message: { error: 'Too many AI requests. Try again in a minute.' } });
-const authLimiter = rateLimit({ windowMs: 15 * 60_000, max: 10, standardHeaders: true, legacyHeaders: false,
+// Login/2FA verify: 5 attempts per 15 min per IP (audit spec), on top of the
+// per-account lockout + captcha layers. Limits are env-overridable so the
+// integration tests can exercise the account-level guards without tripping
+// the per-IP circuit; production defaults are the audit values.
+const loginLimiter = rateLimit({ windowMs: 15 * 60_000, max: Number(process.env.LOGIN_RATE_MAX) || 5, standardHeaders: true, legacyHeaders: false,
+  message: { error: 'Too many login attempts. Try again in 15 minutes.' } });
+const signupLimiter = rateLimit({ windowMs: 15 * 60_000, max: Number(process.env.SIGNUP_RATE_MAX) || 10, standardHeaders: true, legacyHeaders: false,
+  message: { error: 'Too many attempts. Try again later.' } });
+const authLimiter = rateLimit({ windowMs: 15 * 60_000, max: Number(process.env.AUTH_RATE_MAX) || 30, standardHeaders: true, legacyHeaders: false,
   message: { error: 'Too many attempts. Try again later.' } });
 
 for (const route of ['/api/embed', '/api/recipes/generate', '/api/recipes/ideas', '/api/vision', '/api/chat']) {
   app.use(route, aiLimiter);
 }
-for (const route of ['/api/auth/login', '/api/auth/signup']) {
-  app.use(route, authLimiter);
+for (const route of ['/api/auth/login', '/api/auth/2fa/verify']) {
+  app.use(route, loginLimiter);
 }
+app.use('/api/auth/signup', signupLimiter);
+app.use('/api/auth', authLimiter);
 
 // ─── In-memory recipe store — per-user buckets + legacy shared bucket ─────
 let savedRecipes = []; // shared/unauthenticated bucket (pre-auth era)
@@ -126,8 +201,7 @@ function hashToken(token) {
 }
 
 function userForToken(req) {
-  const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  const token = tokenFromRequest(req);
   if (!token) return null;
   const session = authStore.sessions[hashToken(token)];
   if (!session || Date.now() - session.createdAt > SESSION_TTL_MS) {
@@ -662,16 +736,50 @@ app.delete('/api/recipes/:id', (req, res) => {
   res.json({ success: true });
 });
 
-// ─── Auth: signup / login / me / logout ────────────────────────────────────
-app.post('/api/auth/signup', (req, res) => {
-  const { email, password, name } = req.body || {};
+// ─── Auth: signup / login / 2FA / me / logout ───────────────────────────────
+
+function requireCaptchaKey() {
+  return ensureCaptchaKey(API_KEY || 'chefai-dev-pepper');
+}
+
+function loginGuardKey(req, email) {
+  const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket?.remoteAddress || 'unknown';
+  return `${String(email || '').toLowerCase()}|${ip}`;
+}
+
+function logAuthEvent(event, details) {
+  // Failed-attempt log (audit item 4). Never logs passwords or full emails.
+  console.warn(`[auth] ${event}`, JSON.stringify(details));
+}
+
+function publicCaptcha(captcha) {
+  // The answer must never reach the client — only id + question.
+  return { id: captcha.id, question: captcha.question };
+}
+
+app.post('/api/auth/signup', async (req, res) => {
+  const { email, password, name, ageConfirmed, ageYears } = req.body || {};
   const normalizedEmail = String(email || '').trim().toLowerCase();
 
   if (!EMAIL_RE.test(normalizedEmail)) {
     return res.status(400).json({ error: 'Please enter a valid email address' });
   }
-  if (typeof password !== 'string' || password.length < 8) {
-    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  // COPPA-style age gate: the user must affirmatively confirm their age and
+  // be at least 13. Only the confirmation boolean is stored.
+  if (ageConfirmed !== true) {
+    return res.status(400).json({ error: 'Please confirm your age to continue' });
+  }
+  if (Number.isFinite(Number(ageYears)) && Number(ageYears) > 0 && Number(ageYears) < 13) {
+    logAuthEvent('signup-age-block', { domain: normalizedEmail.split('@')[1] });
+    return res.status(403).json({ error: 'ChefAI is only available for users 13 and older' });
+  }
+
+  const problems = passwordProblems(password, { email: normalizedEmail });
+  if (problems.length > 0) {
+    return res.status(400).json({ error: problems[0], problems });
+  }
+  if (await isBreachedPassword(password)) {
+    return res.status(400).json({ error: 'That password appears in known data breaches — please choose a unique one' });
   }
   if (authStore.users.some((u) => u.email === normalizedEmail)) {
     return res.status(409).json({ error: 'An account with this email already exists — sign in instead' });
@@ -682,6 +790,7 @@ app.post('/api/auth/signup', (req, res) => {
     name: String(name || '').trim() || normalizedEmail.split('@')[0],
     createdAt: new Date().toISOString(),
     passwordHash: hashPassword(password),
+    ageConfirmed: true,
   };
   authStore.users.push(user);
   // Seed the new account's collection with anything saved pre-auth (shared bucket)
@@ -689,35 +798,164 @@ app.post('/api/auth/signup', (req, res) => {
   persistAuth();
 
   const token = createSession(normalizedEmail);
-  res.status(201).json({ token, user: publicUser(user) });
+  setSessionCookie(res, token);
+  res.status(201).json({ user: publicUser(user) });
 });
 
-app.post('/api/auth/login', (req, res) => {
-  const { email, password } = req.body || {};
+app.post('/api/auth/login', async (req, res) => {
+  const { email, password, totp, backupCode, captchaId, captchaAnswer, challenge } = req.body || {};
   const normalizedEmail = String(email || '').trim().toLowerCase();
-  const user = authStore.users.find((u) => u.email === normalizedEmail);
+  const guardKey = loginGuardKey(req, normalizedEmail);
 
-  if (!user || !verifyPassword(String(password || ''), user.passwordHash)) {
-    return res.status(401).json({ error: 'Incorrect email or password' });
+  const guard = loginGuardCheck(guardKey);
+  if (!guard.allowed) {
+    logAuthEvent('login-locked', { account: redactEmail(normalizedEmail), retryAfter: guard.retryAfter });
+    return res.status(429).json({ error: `Too many failed attempts. Try again in ${guard.retryAfter}s.`, lockedFor: guard.retryAfter });
+  }
+  if (guard.captchaRequired) {
+    await requireCaptchaKey();
+    if (!(await verifyCaptcha(captchaId, captchaAnswer))) {
+      return res.status(401).json({ error: 'Please solve the captcha to continue', captcha: publicCaptcha(await makeCaptcha()), requiresCaptcha: true });
+    }
   }
 
+  const user = authStore.users.find((u) => u.email === normalizedEmail);
+  const passwordOk = user && verifyPassword(String(password || ''), user.passwordHash);
+  if (!passwordOk) {
+    const { count, lockedForMs } = loginGuardFail(guardKey);
+    logAuthEvent('login-failed', { account: redactEmail(normalizedEmail), attempt: count, lockedForMs });
+    const body = { error: 'Incorrect email or password' };
+    if (count >= 3) {
+      await requireCaptchaKey();
+      body.captcha = publicCaptcha(await makeCaptcha());
+      body.requiresCaptcha = true;
+    }
+    if (lockedForMs) body.lockedFor = Math.ceil(lockedForMs / 1000);
+    return res.status(401).json(body);
+  }
+
+  // Password correct. If 2FA is enabled, issue a short-lived challenge.
+  if (user.totp?.enabled) {
+    if (challenge) {
+      if (!(await verifyChallenge(challenge, user.passwordHash, normalizedEmail))) {
+        return res.status(401).json({ error: 'Sign-in session expired — start again', requiresChallenge: true });
+      }
+      const codeOk = totp && (await verifyTotp(user.totp.secret, totp));
+      let backupOk = false;
+      if (!codeOk && backupCode) {
+        const normalized = normalizeBackupCode(backupCode);
+        const hashed = await hashBackupCode(normalized);
+        const idx = (user.totp.backupCodes || []).indexOf(hashed);
+        if (idx !== -1) {
+          user.totp.backupCodes.splice(idx, 1); // single use
+          persistAuth();
+          backupOk = true;
+        }
+      }
+      if (!codeOk && !backupOk) {
+        const { count } = loginGuardFail(guardKey);
+        logAuthEvent('2fa-failed', { account: redactEmail(normalizedEmail), attempt: count });
+        return res.status(401).json({ error: 'That code is not valid', requiresChallenge: true, challenge });
+      }
+      loginGuardSuccess(guardKey);
+      const token = createSession(normalizedEmail);
+      setSessionCookie(res, token);
+      logAuthEvent('login-success-2fa', { account: redactEmail(normalizedEmail) });
+      return res.json({ user: publicUser(user) });
+    }
+    logAuthEvent('login-challenge-issued', { account: redactEmail(normalizedEmail) });
+    return res.status(401).json({
+      requiresChallenge: true,
+      challenge: await createChallenge(normalizedEmail, user.passwordHash),
+    });
+  }
+
+  loginGuardSuccess(guardKey);
   const token = createSession(normalizedEmail);
-  res.json({ token, user: publicUser(user) });
+  setSessionCookie(res, token);
+  res.json({ user: publicUser(user) });
+});
+
+// ─── 2FA management (TOTP + backup codes) ────────────────────────────────────
+function requireUser(req, res) {
+  const user = userForToken(req);
+  if (!user) {
+    res.status(401).json({ error: 'Not signed in' });
+    return null;
+  }
+  return user;
+}
+
+// Step 1: generate (but do not activate) a secret + otpauth URI
+app.post('/api/auth/2fa/setup', async (req, res) => {
+  const user = requireUser(req, res);
+  if (!user) return;
+  const secret = generateTotpSecret();
+  user.totpPending = { secret, createdAt: Date.now() };
+  persistAuth();
+  res.json({ secret, otpauth: otpauthUri({ secret, email: user.email }) });
+});
+
+// Step 2: confirm a live code to activate, minting 10 single-use backup codes
+app.post('/api/auth/2fa/enable', async (req, res) => {
+  const user = requireUser(req, res);
+  if (!user) return;
+  const { totp: code } = req.body || {};
+  const pending = user.totpPending;
+  if (!pending || Date.now() - pending.createdAt > 10 * 60_000) {
+    return res.status(400).json({ error: 'No pending 2FA setup — start again' });
+  }
+  if (!(await verifyTotp(pending.secret, code))) {
+    return res.status(400).json({ error: 'That code is not valid — check your authenticator app' });
+  }
+  const plainCodes = generateBackupCodes(10);
+  user.totp = {
+    enabled: true,
+    secret: pending.secret,
+    backupCodes: await Promise.all(plainCodes.map((c) => hashBackupCode(c))),
+  };
+  delete user.totpPending;
+  persistAuth();
+  logAuthEvent('2fa-enabled', { account: redactEmail(user.email) });
+  res.json({ enabled: true, backupCodes: plainCodes });
+});
+
+// Disable: requires the password again (protects a hijacked session)
+app.post('/api/auth/2fa/disable', async (req, res) => {
+  const user = requireUser(req, res);
+  if (!user) return;
+  const { password } = req.body || {};
+  if (!user.totp?.enabled) return res.status(400).json({ error: '2FA is not enabled' });
+  if (!verifyPassword(String(password || ''), user.passwordHash)) {
+    logAuthEvent('2fa-disable-denied', { account: redactEmail(user.email) });
+    return res.status(401).json({ error: 'Password is required to turn off 2FA' });
+  }
+  delete user.totp;
+  delete user.totpPending;
+  persistAuth();
+  logAuthEvent('2fa-disabled', { account: redactEmail(user.email) });
+  res.json({ enabled: false });
+});
+
+app.get('/api/auth/2fa/status', (req, res) => {
+  const user = requireUser(req, res);
+  if (!user) return;
+  res.json({ enabled: Boolean(user.totp?.enabled) });
 });
 
 app.get('/api/auth/me', (req, res) => {
   const user = userForToken(req);
   if (!user) return res.status(401).json({ error: 'Not signed in' });
-  res.json({ user: publicUser(user) });
+  res.json({ user: { ...publicUser(user), twoFactorEnabled: Boolean(user.totp?.enabled) } });
 });
 
 app.post('/api/auth/logout', (req, res) => {
-  const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  const token = tokenFromRequest(req);
   if (token && authStore.sessions[hashToken(token)]) {
     delete authStore.sessions[hashToken(token)];
     persistAuth();
   }
+  clearSessionCookie(res);
   res.json({ success: true });
 });
 
@@ -733,6 +971,7 @@ app.delete('/api/auth/account', (req, res) => {
   }
   recipesByUser.delete(userEmail);
   persistAuth();
+  clearSessionCookie(res);
   res.json({ success: true, deleted: userEmail });
 });
 

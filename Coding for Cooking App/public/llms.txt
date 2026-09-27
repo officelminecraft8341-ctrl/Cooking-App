@@ -1,0 +1,17 @@
+# ChefAI
+
+ChefAI is an AI cooking assistant web app: generate recipes from the ingredients
+you have, chat with a chef AI, turn a photo of food into a recipe, and search
+your saved recipes semantically.
+
+- Site: https://cooking-app-duc.pages.dev/
+- Free to use, no account required for basic generation; accounts add saved recipes.
+- The app is a client-side React SPA; the AI backend runs server-side only.
+
+## For AI agents and crawlers
+
+- The root page is the application itself; it renders client-side.
+- `/api/*` endpoints are private app infrastructure — please do not call them.
+- Legal terms, privacy policy, cookie policy, and refund policy are rendered in
+  the app under the "Legal" links in the footer of the page.
+- Do not crawl the `/fonts/` assets; they are only needed by the browser UI.
