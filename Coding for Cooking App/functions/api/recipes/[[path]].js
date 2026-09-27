@@ -13,7 +13,13 @@ export async function onRequest(context) {
     if (!env.CHEFAI_KV) return jsonResponse({ error: 'Storage is not configured (missing KV binding CHEFAI_KV)' }, { status: 500, request, env });
 
     const url = new URL(request.url);
-    const parts = url.pathname.replace(/\/api\/recipes\/?/, '').split('/').filter(Boolean); // ['', id, 'favorite'] shapes
+    // Plain CRUD routes only. /api/recipes/ideas and /api/recipes/generate are
+    // static Pages Functions that take precedence over this dynamic handler.
+    const rest = url.pathname.replace(/^.*\/api\/recipes\/?/, '').replace(/\/$/, '');
+    const parts = rest === '' ? [] : rest.split('/').filter(Boolean);
+    if (parts.length >= 1 && !/^\d+$/.test(parts[0])) {
+      return jsonResponse({ error: 'Not found' }, { status: 404, request, env });
+    }
 
     if (request.method === 'GET' && parts.length === 0) {
       const { bucket } = await bucketFor(request, env.CHEFAI_KV);
