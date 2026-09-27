@@ -718,7 +718,7 @@ app.get('/api/recipes', (req, res) => {
 // Synced so a user's look & feel follows the account across devices. Stored
 // per email alongside recipes; deleted with the account (GDPR erasure).
 // (prefsByUser is declared with authStore above so loadAuth can hydrate it.)
-const PREF_KEYS = ['appearance', 'accessibility', 'consent'];
+const PREF_KEYS = ['appearance', 'accessibility', 'consent', 'plan'];
 
 function prefsFor(req) {
   const user = userForToken(req);
@@ -732,8 +732,9 @@ function sanitizePrefs(input) {
   for (const key of PREF_KEYS) {
     if (input[key] !== undefined && input[key] !== null && typeof input[key] === 'object') {
       // Cap size: settings are tiny — anything bigger is abuse or a bug.
+      // 'plan' gets more headroom: a full month of meals ≈ 8 KB.
       const json = JSON.stringify(input[key]);
-      if (json.length <= 10_000) clean[key] = JSON.parse(json);
+      if (json.length <= 20_000) clean[key] = JSON.parse(json);
     }
   }
   return clean;

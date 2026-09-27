@@ -154,7 +154,7 @@ export async function deleteAccount(kv, user) {
 }
 
 // ─── Per-account preferences (accent, accessibility, consent) ────────────────
-export const PREF_KEYS = ['appearance', 'accessibility', 'consent'];
+export const PREF_KEYS = ['appearance', 'accessibility', 'consent', 'plan'];
 
 export async function getPrefs(kv, email) {
   const raw = await kv.get(`prefs:${email}`);
@@ -167,7 +167,7 @@ export async function updatePrefs(kv, email, input) {
   for (const key of PREF_KEYS) {
     if (input?.[key] !== undefined && input?.[key] !== null && typeof input[key] === 'object') {
       const json = JSON.stringify(input[key]);
-      if (json.length <= 10_000) current[key] = JSON.parse(json); // cap size
+      if (json.length <= 20_000) current[key] = JSON.parse(json); // cap size
     }
   }
   await kv.put(`prefs:${email}`, JSON.stringify(current));

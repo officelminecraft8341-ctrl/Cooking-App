@@ -57,6 +57,11 @@ describe('ChefAI app shell', () => {
     expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'view-panel-generate');
 
     fireEvent.keyDown(window, { key: 'ArrowRight' });
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'view-panel-saved');
+
+    fireEvent.keyDown(window, { key: 'ArrowRight' });
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'view-panel-calendar');
+
     fireEvent.keyDown(window, { key: 'ArrowRight' });
     expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'view-panel-chat');
 
@@ -65,7 +70,42 @@ describe('ChefAI app shell', () => {
     expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'view-panel-chat');
 
     fireEvent.keyDown(window, { key: 'ArrowLeft' });
-    expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'view-panel-saved');
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'view-panel-calendar');
+  });
+
+  it('plans meals on the calendar from saved recipes', async () => {
+    const recipes = [{ title: 'Miso Salmon', id: 1 }];
+    vi.stubGlobal('fetch', vi.fn((url) => {
+      if (String(url).includes('/recipes')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(recipes) });
+      }
+      return Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({ error: 'Not signed in' }) });
+    }));
+
+    renderApp();
+
+    fireEvent.click(screen.getByRole('tab', { name: /calendar/i }));
+    expect(screen.getByText(/meal planner/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: /\d{4}/ })).toBeInTheDocument();
+
+    // Wait for the saved recipes to load from the (mocked) server, then plan
+    await waitFor(() => expect(screen.queryByText(/save a recipe to start planning/i)).not.toBeInTheDocument());
+
+    // Plan dinner for today: switch to day view, open the picker, pick the recipe
+    fireEvent.click(screen.getByRole('button', { name: 'day' }));
+    fireEvent.click(screen.getByRole('button', { name: /plan dinner/i }));
+    fireEvent.click(screen.getByRole('button', { name: /miso salmon/i }));
+
+    await waitFor(() => expect(screen.getByText('Miso Salmon')).toBeInTheDocument());
+    const now = new Date();
+    const localISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    expect(JSON.parse(localStorage.getItem('chefai-meal-plan'))).toMatchObject({
+      [`${localISO}|dinner`]: { title: 'Miso Salmon', recipeId: 1 },
+    });
+
+    // Remove it again
+    fireEvent.click(screen.getByRole('button', { name: /remove dinner for/i }));
+    await waitFor(() => expect(screen.queryByText('Miso Salmon')).not.toBeInTheDocument());
   });
 
   it('does not switch views when typing in an input', () => {

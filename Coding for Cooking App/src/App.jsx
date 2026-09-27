@@ -6,7 +6,7 @@ import { passwordStrength, passwordProblems } from '../shared/authShared.js';
 import {
   ChefHat, Accessibility, Bell, X, Sparkles, BookOpen, Bot,
   Plus, Heart, Layers3, BadgeCheck, TimerReset, Flame, BookmarkPlus,
-  Palette, Check, Move, ArrowRight, Video, Newspaper, LogOut, UserRound, Loader2, Trash2, ShieldCheck,
+  Palette, Check, Move, ArrowRight, Video, Newspaper, LogOut, UserRound, Loader2, Trash2, ShieldCheck, CalendarDays,
 } from 'lucide-react';
 import LegalDocs from './LegalDocs';
 import { ConsentBanner, ConsentCheckbox, readStoredConsent } from './Consent';
@@ -15,6 +15,7 @@ import { ConsentBanner, ConsentCheckbox, readStoredConsent } from './Consent';
 import HomeView from './views/HomeView';
 import GeneratorView from './views/GeneratorView';
 import SavedView from './views/SavedView';
+import CalendarView from './views/CalendarView';
 import ChatView from './views/ChatView';
 
 const ACCESSIBILITY_STORAGE_KEY = 'chefai-accessibility-settings';
@@ -72,6 +73,13 @@ const VIEWS = [
     icon: Heart,
     accent: 'bg-accent-strong',
     description: 'Your recipe collection',
+  },
+  {
+    id: 'calendar',
+    label: 'Calendar',
+    icon: CalendarDays,
+    accent: 'bg-accent-strong',
+    description: 'Plan meals for the month',
   },
   {
     id: 'chat',
@@ -288,6 +296,14 @@ function App() {
   const prefsSyncReadyRef = useRef(false);
   const pushPrefsTimerRef = useRef(null);
 
+  // Meal plan: keyed "YYYY-MM-DD|slot" → { title, recipeId }. Cached in
+  // localStorage, synced to the account like prefs (debounced push on change,
+  // pulled on sign-in) so the plan follows the user across devices.
+  const [plan, setPlan] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('chefai-meal-plan')) || {}; } catch { return {}; }
+  });
+  const planSyncTimerRef = useRef(null);
+
   useEffect(() => {
     const epoch = authEpochRef.current;
     authMe()
@@ -361,6 +377,24 @@ function App() {
   useEffect(() => {
     localStorage.setItem('chefai-saved-recipes', JSON.stringify(savedRecipes));
   }, [savedRecipes]);
+
+  // ── Meal plan: local cache + account sync ─────────────────────────────
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('chefai-meal-plan') || '{}');
+      if (stored && typeof stored === 'object' && Object.keys(stored).length > 0) setPlan(stored);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('chefai-meal-plan', JSON.stringify(plan));
+    if (!authUser || !prefsSyncReadyRef.current) return undefined;
+    if (planSyncTimerRef.current) clearTimeout(planSyncTimerRef.current);
+    planSyncTimerRef.current = setTimeout(() => {
+      pushPrefs({ plan }).catch(() => { /* offline; next change retries */ });
+    }, 1200);
+    return () => { if (planSyncTimerRef.current) clearTimeout(planSyncTimerRef.current); };
+  }, [authUser, plan]);
 
   // Toast auto-dismiss
   useEffect(() => {
@@ -703,6 +737,7 @@ function App() {
     fetchPrefs().then((prefs) => {
       if (prefs?.appearance?.accent) setAppearance({ ...defaultAppearance, ...prefs.appearance });
       if (prefs?.accessibility) setAccessibilitySettings({ ...defaultAccessibilitySettings, ...prefs.accessibility });
+      if (prefs?.plan && typeof prefs.plan === 'object') setPlan((current) => ({ ...current, ...prefs.plan }));
       prefsSyncReadyRef.current = true;
     }).catch(() => { prefsSyncReadyRef.current = true; });
   };
@@ -848,6 +883,20 @@ function App() {
     } catch {
       window.alert('Could not delete your account. Please try again.');
     }
+  };
+
+  // Meal-plan editing: entry = recipe to place, null to clear the slot.
+  const handleChangePlan = (date, slot, recipe) => {
+    setPlan((current) => {
+      const next = { ...current };
+      const key = `${date}|${slot}`;
+      if (recipe) {
+        next[key] = { title: recipe.title, recipeId: recipe.id ?? null };
+      } else {
+        delete next[key];
+      }
+      return next;
+    });
   };
 
   // ── Helpers ───────────────────────────────────────────────────────────
@@ -1120,6 +1169,16 @@ function App() {
                   onDeleteSaved={handleDeleteSaved}
                   onToggleFavorite={handleToggleFavorite}
                   onNavigate={navigateToView}
+                />
+              )}
+              {activeView === 'calendar' && (
+                <CalendarView
+                  savedRecipes={savedRecipes}
+                  plan={plan}
+                  onChangePlan={handleChangePlan}
+                  onOpenRecipe={handleOpenRecipeDetail}
+                  onNavigate={navigateToView}
+                  announce={announce}
                 />
               )}
               {activeView === 'chat' && (

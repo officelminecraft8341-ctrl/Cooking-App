@@ -258,3 +258,26 @@ describe('auth API — hardened', () => {
     expect(me.status).toBe(401);
   });
 });
+
+describe('meal plan sync', () => {
+  it('stores and returns a meal plan via /api/prefs', async () => {
+    const { cookie } = await api('/api/auth/signup', {
+      method: 'POST',
+      body: { email: 'planner@test.com', password: STRONG2, ageConfirmed: true },
+    });
+    const plan = {
+      '2026-10-05|dinner': { title: 'Miso Salmon', recipeId: 12 },
+      '2026-10-06|lunch': { title: 'Chickpea Salad', recipeId: 13 },
+    };
+    const put = await api('/api/prefs', { method: 'PUT', cookie, body: { plan } });
+    expect(put.status).toBe(200);
+    const get = await api('/api/prefs', { cookie });
+    expect(get.data.plan).toMatchObject(plan);
+    // Over-size plans are rejected (cap), keeping the endpoint abuse-proof.
+    const huge = { 'k': 'x'.repeat(25_000) };
+    await api('/api/prefs', { method: 'PUT', cookie, body: { plan: huge } });
+    const after = await api('/api/prefs', { cookie });
+    expect(JSON.stringify(after.data.plan)).toBe(JSON.stringify(plan)); // unchanged
+    await api('/api/auth/account', { method: 'DELETE', cookie });
+  });
+});
