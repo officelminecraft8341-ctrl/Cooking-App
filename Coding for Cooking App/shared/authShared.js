@@ -5,13 +5,17 @@
 const encoder = new TextEncoder();
 
 // ─── Password policy ─────────────────────────────────────────────────────────
-export const MIN_PASSWORD_LENGTH = 12;
+// Deliberately approachable: length matters far more than symbol gymnastics
+// (NIST 800-63B), so 8+ chars with at least 3 of 4 character classes. The
+// blocklist + HIBP check carry the real protection against credential stuffing.
+export const MIN_PASSWORD_LENGTH = 8;
 
 // Non-exhaustive worst-offender blocklist (the Have I Been Pwned range check
 // covers the long tail). Deliberately includes the classics from the audit.
 const COMMON_PASSWORDS = new Set([
   '123456', '12345678', '123456789', '1234567890', 'password', 'password1',
-  'password123', 'password1234', 'passw0rd', 'p@ssword', 'qwerty', 'qwerty123',
+  'password123', 'password1234', 'password123!', 'Password123!', 'password1!',
+  'passw0rd', 'p@ssword', 'P@ssw0rd1', 'qwerty', 'qwerty123', 'qwerty123!',
   'qwertyuiop', 'abc123', 'abc123456', '111111', '11111111', '000000', '00000000',
   '123123', '121212', '123321', '1234', '12345', '1234567', '654321', '696969',
   'iloveyou', 'iloveyou1', 'iloveyou2', 'admin', 'admin123', 'administrator',
@@ -38,8 +42,9 @@ export function passwordProblems(password, { email = '' } = {}) {
   const pw = String(password || '');
   const problems = [];
   if (pw.length < MIN_PASSWORD_LENGTH) problems.push(`Use at least ${MIN_PASSWORD_LENGTH} characters`);
-  for (const { label, re } of CLASS_TESTS) {
-    if (!re.test(pw)) problems.push(`Add at least one ${label}`);
+  const classesPresent = CLASS_TESTS.filter(({ re }) => re.test(pw)).length;
+  if (classesPresent < 3) {
+    problems.push('Mix at least 3 of: upper letter, lower letter, number, symbol');
   }
   if (COMMON_PASSWORDS.has(pw.toLowerCase())) problems.push('That password is too common — pick something unique');
   const local = String(email || '').split('@')[0].toLowerCase();
@@ -54,6 +59,7 @@ export function passwordStrength(password) {
   const pw = String(password || '');
   if (!pw) return { score: 0, label: '' };
   let score = 0;
+  if (pw.length >= 8) score += 1;
   if (pw.length >= 12) score += 1;
   if (pw.length >= 16) score += 1;
   const classes = CLASS_TESTS.filter(({ re }) => re.test(pw)).length;

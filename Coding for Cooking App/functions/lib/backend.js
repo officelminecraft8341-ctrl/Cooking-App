@@ -143,6 +143,7 @@ export async function loginUser(kv, { email, password, totp, backupCode, challen
 export async function deleteAccount(kv, user) {
   await kv.delete(`user:${user.email}`);
   await kv.delete(`recipes:${user.email}`);
+  await kv.delete(`prefs:${user.email}`);
   // delete every session for this user by listing session keys
   const sessions = await kv.list({ prefix: 'session:' });
   await Promise.all(sessions.keys.map(async (key) => {
@@ -150,6 +151,27 @@ export async function deleteAccount(kv, user) {
     if (!raw) return;
     try { if (JSON.parse(raw).email === user.email) await kv.delete(key.name); } catch { /* ignore */ }
   }));
+}
+
+// ─── Per-account preferences (accent, accessibility, consent) ────────────────
+export const PREF_KEYS = ['appearance', 'accessibility', 'consent'];
+
+export async function getPrefs(kv, email) {
+  const raw = await kv.get(`prefs:${email}`);
+  return raw ? JSON.parse(raw) : {};
+}
+
+// Merges a sanitized partial update and stores it. Returns the clean prefs.
+export async function updatePrefs(kv, email, input) {
+  const current = await getPrefs(kv, email);
+  for (const key of PREF_KEYS) {
+    if (input?.[key] !== undefined && input?.[key] !== null && typeof input[key] === 'object') {
+      const json = JSON.stringify(input[key]);
+      if (json.length <= 10_000) current[key] = JSON.parse(json); // cap size
+    }
+  }
+  await kv.put(`prefs:${email}`, JSON.stringify(current));
+  return current;
 }
 
 // ─── Per-user recipe buckets (KV) ────────────────────────────────────────────

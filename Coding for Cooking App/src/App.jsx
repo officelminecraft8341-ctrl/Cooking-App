@@ -1,7 +1,7 @@
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { apiRequest, authSignUp, authLogin, authLogout, authMe, auth2faSetup, auth2faEnable, auth2faDisable, auth2faStatus, markSignedIn, markSignedOut } from './apiClient';
+import { apiRequest, authSignUp, authLogin, authLogout, authMe, auth2faSetup, auth2faEnable, auth2faDisable, auth2faStatus, fetchPrefs, pushPrefs, markSignedIn, markSignedOut } from './apiClient';
 import { passwordStrength, passwordProblems } from '../shared/authShared.js';
 import {
   ChefHat, Accessibility, Bell, X, Sparkles, BookOpen, Bot,
@@ -283,6 +283,10 @@ function App() {
   // Bumped whenever the user signs in/out so a slow in-flight /auth/me from
   // mount time can never clobber a newer session state.
   const authEpochRef = useRef(0);
+  // Cross-device sync: true once this session has pulled the account's
+  // preferences, so local edits push instead of racing the initial pull.
+  const prefsSyncReadyRef = useRef(false);
+  const pushPrefsTimerRef = useRef(null);
 
   useEffect(() => {
     const epoch = authEpochRef.current;
@@ -321,6 +325,18 @@ function App() {
     document.documentElement.setAttribute('data-accent', appearance.accent);
     document.body.classList.toggle('glass-off', !appearance.liquidGlass);
   }, [appearance]);
+
+  // Push preference changes to the account (debounced) so the look & feel
+  // follows the user to every device. localStorage stays as the signed-out
+  // cache only — the account is the source of truth once signed in.
+  useEffect(() => {
+    if (!authUser || !prefsSyncReadyRef.current) return undefined;
+    if (pushPrefsTimerRef.current) clearTimeout(pushPrefsTimerRef.current);
+    pushPrefsTimerRef.current = setTimeout(() => {
+      pushPrefs({ appearance, accessibility: accessibilitySettings }).catch(() => { /* offline; next change retries */ });
+    }, 1200);
+    return () => { if (pushPrefsTimerRef.current) clearTimeout(pushPrefsTimerRef.current); };
+  }, [authUser, appearance, accessibilitySettings]);
 
   useEffect(() => {
     const root = document.body;
@@ -671,11 +687,32 @@ function App() {
     setSignupConsent(false);
   };
 
+  // Pull everything that lives on the account: recipes are merged, synced
+  // preferences (accent, accessibility) win over this device's cache — that is
+  // what makes "log in on my phone, see my laptop's recipes" work.
+  const pullAccountData = () => {
+    prefsSyncReadyRef.current = false;
+    apiRequest('/recipes').then((recipes) => {
+      if (!Array.isArray(recipes)) return;
+      setSavedRecipes((current) => {
+        const byTitle = new Map(current.map((r) => [r.title, r]));
+        recipes.forEach((r) => { if (r?.title && !byTitle.has(r.title)) byTitle.set(r.title, r); });
+        return Array.from(byTitle.values());
+      });
+    }).catch(() => { /* offline — local cache stands in */ });
+    fetchPrefs().then((prefs) => {
+      if (prefs?.appearance?.accent) setAppearance({ ...defaultAppearance, ...prefs.appearance });
+      if (prefs?.accessibility) setAccessibilitySettings({ ...defaultAccessibilitySettings, ...prefs.accessibility });
+      prefsSyncReadyRef.current = true;
+    }).catch(() => { prefsSyncReadyRef.current = true; });
+  };
+
   const completeSignIn = (user, isNew) => {
     authEpochRef.current += 1;
     setAuthUser(user);
     markSignedIn();
     setTwoFactorEnabled(Boolean(user?.twoFactorEnabled));
+    pullAccountData();
     setIsAuthOpen(false);
     announce(`Signed in${isNew ? '' : ' back'}. Welcome, ${user.name}.`);
     setMessages((current) => [
@@ -732,6 +769,7 @@ function App() {
 
   const handleSignOut = async () => {
     authEpochRef.current += 1;
+    prefsSyncReadyRef.current = false;
     await authLogout();
     setAuthUser(null);
     markSignedOut();
@@ -1425,11 +1463,11 @@ function App() {
                     aria-label="Password"
                     type="password"
                     required
-                    minLength={authMode === 'signup' ? 12 : 1}
+                    minLength={authMode === 'signup' ? 8 : 1}
                     autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder={authMode === 'signup' ? 'At least 12 characters' : ''}
+                    placeholder={authMode === 'signup' ? 'At least 8 characters' : ''}
                     className="mt-2 w-full rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-ember"
                   />
                 </label>

@@ -157,9 +157,13 @@ function bucketFor(req) {
 const DATA_FILE = process.env.CHEFAI_DATA_FILE
   ? path.resolve(process.env.CHEFAI_DATA_FILE)
   : new URL('./data.json', import.meta.url);
-const authStore = { users: [], sessions: {} };
+const authStore = { users: [], sessions: {}, prefs: {} };
+const prefsByUser = new Map(); // email → synced prefs (appearance/accessibility/consent)
 
 function persistAuth() {
+  // prefs + per-user recipe buckets ride along so nothing is lost on restart.
+  authStore.prefs = Object.fromEntries(prefsByUser);
+  authStore.recipes = Object.fromEntries(recipesByUser);
   try { fs.writeFileSync(DATA_FILE, JSON.stringify(authStore, null, 2), { mode: 0o600 }); } catch { /* read-only fs is non-fatal */ }
 }
 
@@ -168,6 +172,18 @@ function loadAuth() {
     const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     if (Array.isArray(raw.users)) authStore.users = raw.users;
     if (raw.sessions && typeof raw.sessions === 'object') authStore.sessions = raw.sessions;
+    if (raw.prefs && typeof raw.prefs === 'object') {
+      for (const [email, prefs] of Object.entries(raw.prefs)) prefsByUser.set(email, prefs);
+    }
+    // Per-account recipe buckets survive restarts too.
+    if (raw.recipes && typeof raw.recipes === 'object') {
+      for (const [email, bucket] of Object.entries(raw.recipes)) {
+        recipesByUser.set(email, Array.isArray(bucket) ? bucket : []);
+        for (const recipe of recipesByUser.get(email)) {
+          if (typeof recipe?.id === 'number' && recipe.id >= nextId) nextId = recipe.id + 1;
+        }
+      }
+    }
   } catch { /* first boot */ }
 }
 loadAuth();
@@ -698,6 +714,45 @@ app.get('/api/recipes', (req, res) => {
   res.json(bucketFor(req));
 });
 
+// ─── Per-account preferences (accent theme, accessibility, consent) ─────────
+// Synced so a user's look & feel follows the account across devices. Stored
+// per email alongside recipes; deleted with the account (GDPR erasure).
+// (prefsByUser is declared with authStore above so loadAuth can hydrate it.)
+const PREF_KEYS = ['appearance', 'accessibility', 'consent'];
+
+function prefsFor(req) {
+  const user = userForToken(req);
+  if (!user) return null;
+  if (!prefsByUser.has(user.email)) prefsByUser.set(user.email, {});
+  return prefsByUser.get(user.email);
+}
+
+function sanitizePrefs(input) {
+  const clean = {};
+  for (const key of PREF_KEYS) {
+    if (input[key] !== undefined && input[key] !== null && typeof input[key] === 'object') {
+      // Cap size: settings are tiny — anything bigger is abuse or a bug.
+      const json = JSON.stringify(input[key]);
+      if (json.length <= 10_000) clean[key] = JSON.parse(json);
+    }
+  }
+  return clean;
+}
+
+app.get('/api/prefs', (req, res) => {
+  const prefs = prefsFor(req);
+  if (!prefs) return res.status(401).json({ error: 'Sign in to sync preferences' });
+  res.json(prefs);
+});
+
+app.put('/api/prefs', (req, res) => {
+  const prefs = prefsFor(req);
+  if (!prefs) return res.status(401).json({ error: 'Sign in to sync preferences' });
+  Object.assign(prefs, sanitizePrefs(req.body || {}));
+  persistAuth();
+  res.json({ success: true, prefs });
+});
+
 // ─── POST /api/recipes ───────────────────────────────────────────────────────
 app.post('/api/recipes', (req, res) => {
   const recipe = req.body;
@@ -713,6 +768,7 @@ app.post('/api/recipes', (req, res) => {
 
   const saved = { ...recipe, id: nextId++, savedAt: new Date().toISOString(), isFavorite: false };
   bucket.push(saved);
+  persistAuth(); // signed-in buckets are durable; restarts keep every recipe
   return res.status(201).json({ recipe: saved });
 });
 
@@ -723,6 +779,7 @@ app.put('/api/recipes/:id/favorite', (req, res) => {
   const recipe = bucket.find((r) => r.id === id);
   if (!recipe) return res.status(404).json({ error: 'Recipe not found' });
   recipe.isFavorite = !recipe.isFavorite;
+  persistAuth();
   res.json({ recipe });
 });
 
@@ -733,6 +790,7 @@ app.delete('/api/recipes/:id', (req, res) => {
   const index = bucket.findIndex((r) => r.id === id);
   if (index === -1) return res.status(404).json({ error: 'Recipe not found' });
   bucket.splice(index, 1);
+  persistAuth();
   res.json({ success: true });
 });
 
@@ -970,6 +1028,7 @@ app.delete('/api/auth/account', (req, res) => {
     if (session.email === userEmail) delete authStore.sessions[storedHash];
   }
   recipesByUser.delete(userEmail);
+  prefsByUser.delete(userEmail);
   persistAuth();
   clearSessionCookie(res);
   res.json({ success: true, deleted: userEmail });

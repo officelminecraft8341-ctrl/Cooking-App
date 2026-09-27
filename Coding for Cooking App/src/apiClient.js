@@ -88,6 +88,15 @@ export async function auth2faStatus() {
   return apiRequest('/auth/2fa/status');
 }
 
+// ─── Per-account preference sync (appearance/accessibility/consent) ────────
+export async function fetchPrefs() {
+  return apiRequest('/prefs');
+}
+
+export async function pushPrefs(prefs) {
+  return apiRequest('/prefs', { method: 'PUT', body: prefs });
+}
+
 // ─── Vision API (photo → ingredients / photo → dish) ───────────────────────
 export async function visionPantry(images) {
   return apiRequest('/vision/pantry', { method: 'POST', body: { images } });

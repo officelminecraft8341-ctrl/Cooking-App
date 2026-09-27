@@ -50,8 +50,9 @@ async function api(pathname, { method = 'GET', body, token, cookie } = {}) {
   return { status: response.status, data: await response.json().catch(() => ({})), cookie: cookieValue, setCookie };
 }
 
-const STRONG = 'Str0ng!Passw0rd-x1';
+const STRONG = 'Str0ng!Pw-x1';
 const STRONG2 = 'C0rr3ct!Horse-Battery';
+const TOO_WEAK = 'abcdefgh1'; // 9 chars, single class — fails the 3-of-4 rule
 
 // "What is 7 + 5?" → 12 (test-side solver for the stateless math captcha)
 function captchaAnswerFor(question) {
@@ -60,10 +61,11 @@ function captchaAnswerFor(question) {
 }
 
 describe('auth API — hardened', () => {
-  it('rejects signup with an invalid email, short password, or missing age confirmation', async () => {
+  it('rejects signup with an invalid email, weak password, or missing age confirmation', async () => {
     expect((await api('/api/auth/signup', { method: 'POST', body: { email: 'nope', password: STRONG, ageConfirmed: true } })).status).toBe(400);
     expect((await api('/api/auth/signup', { method: 'POST', body: { email: 'a@b.co', password: 'short', ageConfirmed: true } })).status).toBe(400);
-    expect((await api('/api/auth/signup', { method: 'POST', body: { email: 'a@b.co', password: 'password123456!!', ageConfirmed: true } })).status).toBe(400); // blocklisted
+    expect((await api('/api/auth/signup', { method: 'POST', body: { email: 'a@b.co', password: TOO_WEAK, ageConfirmed: true } })).status).toBe(400);
+    expect((await api('/api/auth/signup', { method: 'POST', body: { email: 'a@b.co', password: 'Password123!', ageConfirmed: true } })).status).toBe(400); // blocklisted
     expect((await api('/api/auth/signup', { method: 'POST', body: { email: 'a@b.co', password: STRONG, ageConfirmed: false } })).status).toBe(400);
   });
 
