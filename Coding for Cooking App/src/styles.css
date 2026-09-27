@@ -579,3 +579,38 @@ a {
 .text-slate-500 {
   color: #576372;
 }
+
+/* ─── No visible scrollbars ──────────────────────────────────────────────
+   Scrolling still works everywhere (wheel, touch, trackpad, keyboard).
+   Scroll position stays visible enough through layout and focus states;
+   users who need visible scroll affordances get them back in high-contrast
+   mode, where a slim visible bar is re-enabled. */
+* {
+  scrollbar-width: none; /* Firefox + modern Chromium */
+  -ms-overflow-style: none; /* legacy Edge/IE */
+}
+*::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none; /* Chromium/Safari/WebView */
+}
+
+/* High-contrast mode: restore a minimal visible scrollbar so scroll
+   position is never invisible for users relying on this mode. */
+.accessibility-high-contrast,
+.accessibility-high-contrast * {
+  scrollbar-width: thin;
+  -ms-overflow-style: auto;
+}
+.accessibility-high-contrast *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  display: block;
+}
+.accessibility-high-contrast *::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 9999px;
+}
+.accessibility-high-contrast *::-webkit-scrollbar-track {
+  background: transparent;
+}
