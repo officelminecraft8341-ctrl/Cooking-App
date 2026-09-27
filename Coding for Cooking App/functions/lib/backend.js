@@ -272,6 +272,30 @@ export function parseDataImages(rawImages) {
 }
 
 // ─── Shared auth policy (password rules, TOTP, backup codes, guards) ─────────
+// Import for local use inside loginUser/signUpUser (a bare re-export does not
+// bind the names in this module's scope).
+import {
+  passwordProblems,
+  isBreachedPassword,
+  generateTotpSecret,
+  totpCode,
+  verifyTotp,
+  otpauthUri,
+  generateBackupCodes,
+  hashBackupCode,
+  normalizeBackupCode,
+  createChallenge,
+  verifyChallenge,
+  ensureCaptchaKey,
+  makeCaptcha,
+  verifyCaptcha,
+  loginGuardCheck,
+  loginGuardFail,
+  loginGuardSuccess,
+  redactEmail,
+} from '../../shared/authShared.js';
+
+// Re-export for the route handlers.
 export {
   passwordProblems,
   isBreachedPassword,
