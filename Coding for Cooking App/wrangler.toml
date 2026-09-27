@@ -1,3 +1,10 @@
 name = "chefai"
-main = "./server/index.js"
 compatibility_date = "2024-09-01"
+pages_build_output_dir = "dist"
+
+# KV namespace for users/sessions/recipes on Pages.
+# Create it once:  npx wrangler kv namespace create CHEFAI_KV
+# then paste the id below and add the binding in the Cloudflare dashboard too.
+[[kv_namespaces]]
+binding = "CHEFAI_KV"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
