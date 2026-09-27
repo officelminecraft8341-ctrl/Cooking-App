@@ -14,8 +14,10 @@ const APPLE_JWKS_URL = 'https://appleid.apple.com/auth/keys';
 
 const STATE_TTL_MS = 10 * 60 * 1000;
 
-export function oauthConfig(env = {}) {
-  const base = String(env.OAUTH_REDIRECT_BASE || '').replace(/\/+$/, '');
+export function oauthConfig(env = {}, fallbackBase = '') {
+  // Prefer the explicit env var; fall back to the request origin so OAuth
+  // works on any domain (pages.dev, custom domains, localhost) without config.
+  const base = String(env.OAUTH_REDIRECT_BASE || fallbackBase || '').replace(/\/+$/, '');
   return {
     google: {
       clientId: env.GOOGLE_CLIENT_ID || '',

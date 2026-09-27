@@ -262,7 +262,7 @@ export async function onRequest(context) {
 
     // ─── OAuth: Google + Apple sign-in / account linking ────────────────────
     if (action === 'oauth/status' && request.method === 'GET') {
-      const cfg = oauthConfig(env);
+      const cfg = oauthConfig(env, new URL(request.url).origin);
       const user = await userForToken(request, env.CHEFAI_KV);
       return jsonResponse({
         providers: {
@@ -294,7 +294,7 @@ export async function onRequest(context) {
     const oauthMatch = action.match(/^oauth\/(google|apple)\/(start|callback)$/);
     if (oauthMatch) {
       const [, provider, phase] = oauthMatch;
-      const cfg = oauthConfig(env);
+      const cfg = oauthConfig(env, new URL(request.url).origin);
       const pepper = env.OPENAI_API_KEY || 'chefai-oauth-pepper';
       // Provider redirects land here full-page; results go to the SPA hash
       // route, which notifies the opener window and closes itself.

@@ -8,6 +8,9 @@ binding = "CHEFAI_KV"
 id = "082640b236e648e7a9ea2d3e66c2e5b5"
 
 [vars]
+# Public OAuth client identifier — not a secret, safe to commit.
+# (The client SECRET stays a Cloudflare env secret, set in the dashboard.)
+GOOGLE_CLIENT_ID = "924306565956-itugdad6bfa46ohvv44qg9iqomi4312h.apps.googleusercontent.com"
 AI_URL = "https://ai.hackclub.com/proxy/v1/chat/completions"
 AI_MODEL = "cohere/north-mini-code:free"
 VISION_MODEL = "qwen/qwen2.5-vl-72b-instruct"
