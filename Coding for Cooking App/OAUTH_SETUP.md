@@ -1,5 +1,8 @@
 # Social sign-in setup (Google + Apple)
 
+**Status: Google is configured and live.** Apple awaits an Apple Developer
+account (the button stays hidden until then).
+
 The app already has the full OAuth flow deployed. These credentials are the
 only missing piece — once the keys are in, the buttons appear automatically
 in the sign-in modal and in **Security → Connected accounts**.
