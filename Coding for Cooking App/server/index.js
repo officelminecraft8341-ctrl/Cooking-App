@@ -760,5 +760,11 @@ export function startServer(port = Number(process.env.PORT) || 3001) {
 import { pathToFileURL } from 'node:url';
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const server = startServer();
-  console.log(`ChefAI server running on http://localhost:${server.address().port}`);
+  server.on('error', (error) => {
+    console.error('Server failed to start:', error.message);
+    process.exit(1);
+  });
+  server.on('listening', () => {
+    console.log(`ChefAI server running on http://localhost:${server.address().port}`);
+  });
 }
