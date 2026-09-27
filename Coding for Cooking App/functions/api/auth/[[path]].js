@@ -42,7 +42,7 @@ import {
   appleAuthUrl,
   exchangeGoogle,
   exchangeApple,
-} from '../../shared/oauthShared.js';
+} from '../../../shared/oauthShared.js';
 
 // Routes: POST /api/auth/signup | /api/auth/login | /api/auth/logout
 //         POST /api/auth/2fa/setup|enable|disable, GET /api/auth/2fa/status
