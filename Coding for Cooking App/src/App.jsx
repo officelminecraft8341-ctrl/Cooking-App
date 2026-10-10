@@ -1180,7 +1180,7 @@ function App() {
       <div aria-live="polite" aria-atomic="true" role="status" className="sr-only">{liveAnnouncement}</div>
       <a href="#main-content" className="skip-link">Skip to main content</a>
       {/* ── Header ────────────────────────────────────────────────────────── */}
-      <header className="liquid-glass z-20 flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-none border-x-0 border-t-0 px-4 py-3 sm:px-6">
+      <header className="liquid-glass z-20 flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-none border-0 px-4 py-3 sm:px-6">
         <div className="flex items-center gap-3">
           <div className="rounded-2xl bg-ember p-2.5 text-white shadow-lg shadow-ember/30">
             <ChefHat size={20} />
@@ -1300,7 +1300,7 @@ function App() {
         {/* Left icon rail (macOS style, wide screens) */}
         <nav
           aria-label="Feature rail"
-          className={`liquid-glass z-10 hidden w-16 shrink-0 flex-col items-center gap-2 rounded-none border-y-0 border-l-0 py-4 lg:flex ${
+          className={`liquid-glass z-10 hidden w-16 shrink-0 flex-col items-center gap-2 rounded-r-[24px] border-0 py-4 lg:flex ${
             highContrast ? 'bg-slate-900/90' : ''
           }`}
         >
