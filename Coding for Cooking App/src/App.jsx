@@ -1296,7 +1296,20 @@ function App() {
       </header>
 
       {/* ── Body: rail + swipeable deck ───────────────────────────────────── */}
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
+        {/* Fillet: curved bridge fusing the header + rail into one shell (web view).
+            Glass quarter bridging the header's bottom edge into the rail's right
+            edge — the inner corner becomes a smooth scoop, not a sharp joint. */}
+        <div
+          aria-hidden="true"
+          className="liquid-glass pointer-events-none absolute left-16 top-0 hidden h-8 w-8 border-0 lg:block"
+          style={{
+            borderWidth: 0,
+            boxShadow: 'none',
+            WebkitMaskImage: 'radial-gradient(circle 32px at 100% 100%, transparent 31px, black 32px)',
+            maskImage: 'radial-gradient(circle 32px at 100% 100%, transparent 31px, black 32px)',
+          }}
+        />
         {/* Left icon rail (macOS style, wide screens) */}
         <nav
           aria-label="Feature rail"
