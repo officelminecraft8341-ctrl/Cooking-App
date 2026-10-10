@@ -1,7 +1,7 @@
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { apiRequest, authSignUp, authLogin, authLogout, authMe, auth2faSetup, auth2faEnable, auth2faDisable, auth2faStatus, fetchPrefs, pushPrefs, markSignedIn, markSignedOut, oauthStatus, oauthStartUrl, oauthUnlink } from './apiClient';
+import { apiRequest, authSignUp, authLogin, authLogout, authMe, auth2faSetup, auth2faEnable, auth2faDisable, auth2faStatus, fetchPrefs, pushPrefs, markSignedIn, markSignedOut, oauthStatus, oauthStartUrl, oauthUnlink, authSetPassword } from './apiClient';
 import { passwordStrength, passwordProblems } from '../shared/authShared.js';
 import {
   ChefHat, Accessibility, Bell, X, Sparkles, BookOpen, Bot,
@@ -176,6 +176,12 @@ function App() {
   // signed-in account. Hidden entirely until env keys exist.
   const [oauthProviders, setOauthProviders] = useState({ google: false, apple: false });
   const [oauthLinked, setOauthLinked] = useState({ google: false, apple: false });
+  // Unified sign-in: whether this account has a password (OAuth-created
+  // accounts start without one until the user sets it below).
+  const [hasPassword, setHasPassword] = useState(true);
+  const [pwCurrent, setPwCurrent] = useState('');
+  const [pwNew, setPwNew] = useState('');
+  const [pwBusy, setPwBusy] = useState(false);
   const [twoFactorSetup, setTwoFactorSetup] = useState(null); // { secret, otpauth }
   const [twoFactorEnableCode, setTwoFactorEnableCode] = useState('');
   const [twoFactorBackupCodes, setTwoFactorBackupCodes] = useState(null);
@@ -274,6 +280,7 @@ function App() {
       .then((data) => {
         if (data?.providers) setOauthProviders({ google: Boolean(data.providers.google), apple: Boolean(data.providers.apple) });
         if (data?.linked) setOauthLinked({ google: Boolean(data.linked.google), apple: Boolean(data.linked.apple) });
+        if (data?.hasPassword !== undefined && data?.hasPassword !== null) setHasPassword(Boolean(data.hasPassword));
       })
       .catch(() => { /* server unreachable — providers stay hidden */ });
   }, []);
@@ -934,6 +941,8 @@ function App() {
     setAuthUser(user);
     markSignedIn();
     setTwoFactorEnabled(Boolean(user?.twoFactorEnabled));
+    if (user?.hasPassword !== undefined) setHasPassword(Boolean(user.hasPassword));
+    if (user?.linked) setOauthLinked({ google: Boolean(user.linked.google), apple: Boolean(user.linked.apple) });
     pullAccountData();
     setIsAuthOpen(false);
     announce(`Signed in${isNew ? '' : ' back'}. Welcome, ${user.name}.`);
@@ -1004,6 +1013,25 @@ function App() {
   };
 
   // ── 2FA management (Security panel) ─────────────────────────────────
+  // Unified sign-in: set the first password or change the existing one.
+  const handleSetPassword = async () => {
+    if (!pwNew || pwBusy) return;
+    setPwBusy(true);
+    setSecurityMessage('');
+    try {
+      await authSetPassword({ currentPassword: hasPassword ? pwCurrent : undefined, newPassword: pwNew });
+      setHasPassword(true);
+      setPwCurrent('');
+      setPwNew('');
+      setSecurityMessage(hasPassword ? 'Password changed.' : 'Password added — you can now sign in with email or Google.');
+      announce(hasPassword ? 'Password changed.' : 'Password added to your account.');
+    } catch (error) {
+      setSecurityMessage(error.message || 'Could not save that password.');
+    } finally {
+      setPwBusy(false);
+    }
+  };
+
   const handleOauthUnlink = async (provider) => {
     try {
       await oauthUnlink(provider);
@@ -2027,11 +2055,54 @@ function App() {
 
               {securityMessage && <p role="status" className="mt-3 text-sm text-slate-600">{securityMessage}</p>}
 
+              {/* ── Sign-in methods: one account, every method lands here ── */}
+              <div className="mt-5 border-t border-slate-200 pt-4">
+                <p className="text-sm font-semibold text-slate-700">Password sign-in</p>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  {hasPassword ? 'Change the password on this account.' : 'This account was created with Google — add a password to sign in either way.'}
+                </p>
+                <div className="mt-3 space-y-2">
+                  {hasPassword && (
+                    <label className="block text-sm font-medium text-slate-700">
+                      Current password
+                      <input
+                        aria-label="Current password"
+                        type="password"
+                        autoComplete="current-password"
+                        value={pwCurrent}
+                        onChange={(e) => setPwCurrent(e.target.value)}
+                        className="mt-2 w-full rounded-[14px] border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-ember"
+                      />
+                    </label>
+                  )}
+                  <label className="block text-sm font-medium text-slate-700">
+                    {hasPassword ? 'New password' : 'Choose a password'}
+                    <input
+                      aria-label={hasPassword ? 'New password' : 'Choose a password'}
+                      type="password"
+                      autoComplete="new-password"
+                      value={pwNew}
+                      onChange={(e) => setPwNew(e.target.value)}
+                      placeholder="At least 8 characters"
+                      className="mt-2 w-full rounded-[14px] border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-ember"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleSetPassword}
+                    disabled={pwBusy || !pwNew || (hasPassword && !pwCurrent)}
+                    className="rounded-full bg-slate-900 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {hasPassword ? 'Change password' : 'Add password'}
+                  </button>
+                </div>
+              </div>
+
               {/* ── Connected accounts: multi sign-in per account ────────── */}
               {(oauthProviders.google || oauthProviders.apple) && (
                 <div className="mt-5 border-t border-slate-200 pt-4">
                   <p className="text-sm font-semibold text-slate-700">Connected accounts</p>
-                  <p className="mt-0.5 text-xs text-slate-500">Sign in with these even without your password.</p>
+                  <p className="mt-0.5 text-xs text-slate-500">Every method below signs in to this same account — recipes and plans stay in sync.</p>
                   <div className="mt-3 space-y-2">
                     {oauthProviders.google && (
                       <div className="flex items-center justify-between gap-2 rounded-[16px] border border-slate-200 bg-slate-50 px-3 py-2">

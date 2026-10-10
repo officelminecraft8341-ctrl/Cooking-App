@@ -867,7 +867,11 @@ app.post('/api/auth/signup', async (req, res) => {
   if (await isBreachedPassword(password)) {
     return res.status(400).json({ error: 'That password appears in known data breaches — please choose a unique one' });
   }
-  if (authStore.users.some((u) => u.email === normalizedEmail)) {
+  const preExisting = authStore.users.find((u) => u.email === normalizedEmail);
+  if (preExisting) {
+    if (!preExisting.passwordHash) {
+      return res.status(409).json({ error: 'This email already signs in with Google — continue with Google, then set a password in Security.', code: 'oauth_only' });
+    }
     return res.status(409).json({ error: 'An account with this email already exists — sign in instead' });
   }
 
@@ -906,7 +910,10 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   const user = authStore.users.find((u) => u.email === normalizedEmail);
-  const passwordOk = user && verifyPassword(String(password || ''), user.passwordHash);
+  if (user && !user.passwordHash && !challenge) {
+    return res.status(401).json({ error: 'This account uses Google sign-in — continue with Google, or sign in with Google once then set a password in Security.', code: 'oauth_only' });
+  }
+  const passwordOk = user && user.passwordHash && verifyPassword(String(password || ''), user.passwordHash);
   if (!passwordOk) {
     const { count, lockedForMs } = loginGuardFail(guardKey);
     logAuthEvent('login-failed', { account: redactEmail(normalizedEmail), attempt: count, lockedForMs });
@@ -1032,7 +1039,27 @@ app.get('/api/auth/2fa/status', (req, res) => {
 app.get('/api/auth/me', (req, res) => {
   const user = userForToken(req);
   if (!user) return res.status(401).json({ error: 'Not signed in' });
-  res.json({ user: { ...publicUser(user), twoFactorEnabled: Boolean(user.totp?.enabled) } });
+  res.json({ user: { ...publicUser(user), twoFactorEnabled: Boolean(user.totp?.enabled), hasPassword: Boolean(user.passwordHash), linked: providerStatus(user) } });
+});
+
+// ─── Unified sign-in: set an initial password (OAuth-created accounts)
+// or change the existing one. Lets every method land in ONE account.
+app.post('/api/auth/password', async (req, res) => {
+  const user = userForToken(req);
+  if (!user) return res.status(401).json({ error: 'Not signed in' });
+  const { currentPassword, newPassword } = req.body || {};
+  const problems = passwordProblems(newPassword, { email: user.email });
+  if (problems.length > 0) return res.status(400).json({ error: problems[0] });
+  if (await isBreachedPassword(newPassword)) {
+    return res.status(400).json({ error: 'That password appears in known data breaches — please choose a unique one' });
+  }
+  if (user.passwordHash && !verifyPassword(String(currentPassword || ''), user.passwordHash)) {
+    return res.status(401).json({ error: 'Your current password is not correct' });
+  }
+  user.passwordHash = hashPassword(String(newPassword));
+  persistAuth();
+  logAuthEvent('password-set', { account: redactEmail(user.email) });
+  res.json({ success: true, hasPassword: true });
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -1097,6 +1124,7 @@ app.get('/api/auth/oauth/status', (req, res) => {
       apple: providerConfigured(cfg, 'apple'),
     },
     linked: user ? providerStatus(user) : null,
+    hasPassword: user ? Boolean(user.passwordHash) : null,
   });
 });
 

@@ -29,6 +29,7 @@ import {
   getUserByEmail,
   putUser,
   verifyPassword,
+  hashPassword,
   getUserByProvider,
   setUserProvider,
   removeUserProvider,
@@ -133,6 +134,12 @@ export async function onRequest(context) {
       if (await isBreachedPassword(body.password)) {
         throw httpError(400, 'That password appears in known data breaches — please choose a unique one');
       }
+      // Unified sign-in: this email may already own an OAuth-created account
+      // with no password yet. Don't silently take it over — point at Google.
+      const preExisting = await getUserByEmail(env.CHEFAI_KV, String(body.email || '').trim().toLowerCase());
+      if (preExisting && !preExisting.passwordHash) {
+        return jsonResponse({ error: 'This email already signs in with Google — continue with Google, then set a password in Security.', code: 'oauth_only' }, { status: 409, request, env });
+      }
       const user = await signUpUser(env.CHEFAI_KV, body);
       const token = await createSession(env.CHEFAI_KV, user.email);
       return jsonResponse({ user }, { status: 201, request, env, setCookie: sessionCookie(token) });
@@ -165,6 +172,11 @@ export async function onRequest(context) {
           const { count, lockedForMs } = loginGuardFail(guardKey);
           await kvRecordFailure(env.CHEFAI_KV, guardKey, count, lockedForMs ? Date.now() + lockedForMs : 0);
           logAuthEvent('login-failed', { account: redactEmail(email), attempt: count, lockedForMs });
+          // OAuth-only account attempting a password login: guide, don't confuse.
+          const existingForHint = await getUserByEmail(env.CHEFAI_KV, email);
+          if (existingForHint && !existingForHint.passwordHash && !body.challenge) {
+            return jsonResponse({ error: 'This account uses Google sign-in — continue with Google, or sign in with Google once then set a password in Security.', code: 'oauth_only' }, { status: 401, request, env });
+          }
           const failBody = { error: error.message };
           // A wrong 2FA code arrives here: keep the client inside the flow by
           // echoing the (still valid, 2-minute) challenge for a retry.
@@ -200,7 +212,29 @@ export async function onRequest(context) {
     if (request.method === 'GET' && action === 'me') {
       const user = await userForToken(request, env.CHEFAI_KV);
       if (!user) return jsonResponse({ error: 'Not signed in' }, { status: 401, request, env });
-      return jsonResponse({ user: { email: user.email, name: user.name, createdAt: user.createdAt, twoFactorEnabled: Boolean(user.totp?.enabled) } }, { request, env });
+      return jsonResponse({ user: { email: user.email, name: user.name, createdAt: user.createdAt, twoFactorEnabled: Boolean(user.totp?.enabled), hasPassword: Boolean(user.passwordHash), linked: { google: Boolean(user.oauth?.google), apple: Boolean(user.oauth?.apple) } } }, { request, env });
+    }
+
+    // ─── Unified sign-in: set an initial password (OAuth-created accounts)
+    // or change the existing one. Lets every method land in ONE account.
+    if (request.method === 'POST' && action === 'password') {
+      const user = await requireUser(request, env);
+      if (user instanceof Response) return user;
+      const { currentPassword, newPassword } = await readJson(request, { maxBytes: 10_000 });
+      const problems = passwordProblems(newPassword, { email: user.email });
+      if (problems.length > 0) return jsonResponse({ error: problems[0] }, { status: 400, request, env });
+      if (await isBreachedPassword(newPassword)) {
+        return jsonResponse({ error: 'That password appears in known data breaches — please choose a unique one' }, { status: 400, request, env });
+      }
+      if (user.passwordHash) {
+        if (!(await verifyPassword(String(currentPassword || ''), user.passwordHash))) {
+          return jsonResponse({ error: 'Your current password is not correct' }, { status: 401, request, env });
+        }
+      }
+      user.passwordHash = await hashPassword(String(newPassword));
+      await putUser(env.CHEFAI_KV, user);
+      logAuthEvent('password-set', { account: redactEmail(user.email) });
+      return jsonResponse({ success: true, hasPassword: true }, { request, env });
     }
 
     if (request.method === 'POST' && action === '2fa/setup') {
@@ -273,6 +307,7 @@ export async function onRequest(context) {
           google: Boolean(user.oauth?.google),
           apple: Boolean(user.oauth?.apple),
         } : null,
+        hasPassword: user ? Boolean(user.passwordHash) : null,
       }, { request, env });
     }
 

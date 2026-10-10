@@ -250,6 +250,38 @@ describe('auth API — hardened', () => {
     expect(response.status).toBe(403);
   });
 
+  it('unified sign-in: /me exposes hasPassword+linked; password change rotates the credential', async () => {
+    const signup = await api('/api/auth/signup', { method: 'POST', body: { email: 'sync@test.com', password: STRONG, ageConfirmed: true } });
+    expect(signup.status).toBe(201);
+    const me = await api('/api/auth/me', { cookie: signup.cookie });
+    expect(me.data.user.hasPassword).toBe(true);
+    expect(me.data.user.linked).toEqual({ google: false, apple: false });
+
+    // Wrong current password is rejected; weak replacement is rejected.
+    const wrongCurrent = await api('/api/auth/password', { method: 'POST', cookie: signup.cookie, body: { currentPassword: 'nope-nope-1', newPassword: STRONG2 } });
+    expect(wrongCurrent.status).toBe(401);
+    const weak = await api('/api/auth/password', { method: 'POST', cookie: signup.cookie, body: { currentPassword: STRONG, newPassword: TOO_WEAK } });
+    expect(weak.status).toBe(400);
+
+    const changed = await api('/api/auth/password', { method: 'POST', cookie: signup.cookie, body: { currentPassword: STRONG, newPassword: STRONG2 } });
+    expect(changed.status).toBe(200);
+    expect(changed.data.hasPassword).toBe(true);
+
+    const oldLogin = await api('/api/auth/login', { method: 'POST', body: { email: 'sync@test.com', password: STRONG } });
+    expect(oldLogin.status).toBe(401);
+    const newLogin = await api('/api/auth/login', { method: 'POST', body: { email: 'sync@test.com', password: STRONG2 } });
+    expect(newLogin.status).toBe(200);
+    await api('/api/auth/account', { method: 'DELETE', cookie: newLogin.cookie });
+  });
+
+  it('rejects anonymous password changes and reports oauth status shape', async () => {
+    const anon = await api('/api/auth/password', { method: 'POST', body: { newPassword: STRONG2 } });
+    expect(anon.status).toBe(401);
+    const status = await api('/api/auth/oauth/status');
+    expect(status.status).toBe(200);
+    expect(status.data.providers).toBeDefined();
+  });
+
   it('deletes the account and every session via /account', async () => {
     const { cookie } = await api('/api/auth/login', { method: 'POST', body: { email: 'second@test.com', password: STRONG2 } });
     const del = await api('/api/auth/account', { method: 'DELETE', cookie });

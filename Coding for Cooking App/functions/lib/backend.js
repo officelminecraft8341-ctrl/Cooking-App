@@ -5,7 +5,7 @@
 const encoder = new TextEncoder();
 
 // ─── Password hashing (PBKDF2-SHA256, 100k iters — scrypt isn't in Workers) ──
-async function hashPassword(password, saltHex = null) {
+export async function hashPassword(password, saltHex = null) {
   const salt = saltHex ? hexDecode(saltHex) : crypto.getRandomValues(new Uint8Array(16));
   const key = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
   const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 100_000 }, key, 256);

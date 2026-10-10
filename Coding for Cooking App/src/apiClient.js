@@ -104,6 +104,12 @@ export async function oauthUnlink(provider) {
   return apiRequest('/auth/oauth/unlink', { method: 'POST', body: { provider } });
 }
 
+// Unified sign-in: set an initial password (Google-created accounts) or
+// change the existing one — every method lands in ONE account.
+export async function authSetPassword({ currentPassword, newPassword }) {
+  return apiRequest('/auth/password', { method: 'POST', body: { currentPassword, newPassword } });
+}
+
 export async function fetchPrefs() {
   return apiRequest('/prefs');
 }
