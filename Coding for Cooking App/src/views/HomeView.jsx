@@ -1,4 +1,3 @@
-import { motion } from 'framer-motion';
 import { Sparkles, Search, Microwave, Plus, BookOpen, ChefHat, ArrowRight, Heart } from 'lucide-react';
 
 const quickTags = ['20 minutes', 'Vegetarian', 'High protein', 'No dairy', 'Italian'];
@@ -31,7 +30,6 @@ const launchpads = [
 ];
 
 export default function HomeView({ accessibilitySettings, onNavigate }) {
-  const reduceMotion = accessibilitySettings.reduceMotion;
   const highContrast = accessibilitySettings.highContrast;
   const dyslexiaStyle = accessibilitySettings.dyslexiaFont
     ? { fontFamily: 'Atkinson Hyperlegible, "Comic Sans MS", "Segoe UI", sans-serif' }
@@ -71,13 +69,13 @@ export default function HomeView({ accessibilitySettings, onNavigate }) {
         </div>
 
         {/* ── Quick input bar ────────────────────────────────────────────── */}
-        <div className={`mt-7 rounded-[26px] p-5 text-white shadow-2xl ${highContrast ? 'bg-slate-800' : 'dark-glass'}`}>
+        <div className={`mt-7 rounded-[20px] p-5 text-white shadow-lg ${highContrast ? 'bg-slate-800' : 'dark-glass !border-0'}`}>
           <form
             onSubmit={(event) => {
               event.preventDefault();
               onNavigate('generate');
             }}
-            className="flex items-center gap-3 rounded-[20px] border border-white/10 bg-white/10 px-4 py-3 text-sm text-slate-300"
+            className="flex items-center gap-3 rounded-[16px] border border-white/10 bg-white/10 px-4 py-3 text-sm text-slate-300"
             style={dyslexiaStyle}
           >
             <Search size={16} />
@@ -112,21 +110,21 @@ export default function HomeView({ accessibilitySettings, onNavigate }) {
           </div>
         </div>
 
-        {/* ── Feature launchpads ─────────────────────────────────────────── */}
-        <div className="mt-7 grid gap-4 md:grid-cols-3">
+        {/* ── Feature launchpads: one connected strip, not three boxes ──── */}
+        <div className={`mt-7 grid divide-y overflow-hidden rounded-[20px] border md:grid-cols-3 md:divide-x md:divide-y-0 ${
+          highContrast
+            ? 'divide-slate-600 border-slate-600 bg-slate-800'
+            : 'divide-slate-200/70 border-slate-200/70 bg-white/70'
+        }`}>
           {launchpads.map((item) => {
             const Icon = item.icon;
             return (
-              <motion.button
+              <button
                 key={item.view}
                 type="button"
-                whileHover={reduceMotion ? undefined : { y: -4, scale: 1.01 }}
-                transition={reduceMotion ? { duration: 0 } : undefined}
                 onClick={() => onNavigate(item.view)}
-                className={`rounded-[22px] border p-5 text-left shadow-lg transition ${
-                  highContrast
-                    ? 'border-slate-600 bg-slate-800 text-slate-50'
-                    : 'border-slate-200 bg-white hover:border-ember/60 hover:shadow-ember/20'
+                className={`p-5 text-left transition ${
+                  highContrast ? 'text-slate-50 hover:bg-slate-700/60' : 'hover:bg-ember/[0.06]'
                 }`}
               >
                 <div className="mb-3 inline-flex rounded-2xl bg-ember/15 p-2 text-ember">
@@ -140,23 +138,22 @@ export default function HomeView({ accessibilitySettings, onNavigate }) {
                 <p className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-ember">
                   {item.cta} <ArrowRight size={14} />
                 </p>
-              </motion.button>
+              </button>
             );
           })}
         </div>
       </section>
 
-      {/* ── Cooking mode teaser ──────────────────────────────────────────── */}      <section className="liquid-glass rounded-[28px] p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-ember">
-            <BookOpen size={18} />
-            <p className="font-semibold">Cooking mode</p>
-          </div>
-          <p className={`max-w-xl text-sm leading-6 ${highContrast ? 'text-slate-200' : 'text-slate-600'}`}>
-            Full-screen guidance with step-by-step progress, voice-ready controls, timers, and ingredient checklists.
-            Open any saved recipe and hit Full view to cook along.
-          </p>
+      {/* ── Cooking mode teaser: a quiet strip, not another box ──────────── */}
+      <section className="flex flex-wrap items-center justify-between gap-3 px-2 py-1">
+        <div className="flex items-center gap-2 text-ember">
+          <BookOpen size={18} />
+          <p className="font-semibold">Cooking mode</p>
         </div>
+        <p className={`max-w-xl text-sm leading-6 ${highContrast ? 'text-slate-200' : 'text-slate-600'}`}>
+          Full-screen guidance with step-by-step progress, voice-ready controls, timers, and ingredient checklists.
+          Open any saved recipe and hit Full view to cook along.
+        </p>
       </section>
     </div>
   );
