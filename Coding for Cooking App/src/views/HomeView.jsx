@@ -56,8 +56,8 @@ export default function HomeView({ accessibilitySettings, onNavigate }) {
               className={`mt-3 text-base sm:text-lg ${highContrast ? 'text-slate-200' : 'text-slate-600'}`}
               style={dyslexiaStyle}
             >
-              ChefAI turns pantry ingredients, preferences, and time constraints into inspiring recipes — with real
-              nutrition, real instructions, and real cooking guidance.
+              ChefAI turns pantry ingredients, preferences, and time constraints into inspiring recipes — with
+              nutrition estimates, step-by-step instructions, and cooking guidance.
             </p>
           </div>
           <button

@@ -25,7 +25,7 @@ const DOCS = {
         p: [
           'Account data (only if you create an account): your name, email address, and a salted, hashed password. We never store passwords in plain text.',
           'Recipe data: recipes you save or that ChefAI generates at your request, stored per account.',
-          "Technical data: a random session token (stored in your browser's localStorage) so you stay signed in for up to 30 days.",
+          "Technical data: a random session token (stored in an HttpOnly cookie, never readable by page scripts) so you stay signed in for up to 30 days.",
           'Local preferences: appearance (theme, liquid glass) and accessibility settings are stored only in your browser via localStorage. They are not transmitted to our servers.',
           'If you use the app without an account, recipes generated before sign-in are kept in your browser only.',
         ],

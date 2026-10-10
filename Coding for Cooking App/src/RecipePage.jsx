@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Clock3, Flame, Sparkles, TimerReset, BookOpen, BadgeCheck, Heart, Layers3 } from 'lucide-react';
+import { ArrowLeft, Clock3, Gauge, ListChecks, BookOpen, BadgeCheck, Heart, Layers3 } from 'lucide-react';
 
 const recipeMap = {
   'golden-tomato-pasta': {
@@ -35,7 +35,50 @@ const recipeMap = {
 export default function RecipePage() {
   const { recipeName } = useParams();
   const [activeStep, setActiveStep] = useState(0);
-  const recipe = useMemo(() => recipeMap[recipeName] || recipeMap['golden-tomato-pasta'], [recipeName]);
+  const recipe = useMemo(() => recipeMap[recipeName] || null, [recipeName]);
+
+  // Unique title + description per sample recipe (SEO: no duplicate titles).
+  useEffect(() => {
+    if (!recipe) {
+      document.title = 'Recipe not found — ChefAI';
+      return;
+    }
+    document.title = `${recipe.title} — ChefAI sample recipe`;
+    let tag = document.querySelector('meta[name="description"]');
+    if (!tag) {
+      tag = document.createElement('meta');
+      tag.setAttribute('name', 'description');
+      document.head.appendChild(tag);
+    }
+    tag.setAttribute('content', `${recipe.title}: ${recipe.description} A sample recipe from ChefAI.`);
+    return () => { document.title = 'ChefAI — Your AI cooking assistant'; };
+  }, [recipe]);
+
+  if (!recipe) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-100 px-6 text-center">
+        <p className="text-6xl font-black text-orange-500" aria-hidden="true">404</p>
+        <h1 className="text-2xl font-semibold text-slate-900">This recipe isn't on the menu</h1>
+        <p className="max-w-md text-sm text-slate-600">
+          That sample recipe doesn't exist. Generate your own with the AI recipe studio instead.
+        </p>
+        <div className="flex flex-wrap justify-center gap-3">
+          <Link
+            to="/?view=generate"
+            className="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700"
+          >
+            Generate a recipe
+          </Link>
+          <Link
+            to="/"
+            className="rounded-full border border-slate-300 bg-white px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+          >
+            Back to ChefAI
+          </Link>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(255,122,24,0.16),_transparent_30%),linear-gradient(135deg,#fffdf9_0%,#f8fafc_100%)] px-4 py-6 text-slate-800 sm:px-6 lg:px-8">
@@ -52,15 +95,15 @@ export default function RecipePage() {
             <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
               <span className="rounded-full bg-slate-100 px-3 py-1">{recipe.time}</span>
               <span className="rounded-full bg-slate-100 px-3 py-1">{recipe.difficulty}</span>
-              <span className="rounded-full bg-slate-100 px-3 py-1">ChefAI recommended</span>
+              <span className="rounded-full bg-slate-100 px-3 py-1">Sample recipe</span>
             </div>
             <h1 className="mt-4 text-4xl font-semibold text-slate-900">{recipe.title}</h1>
             <p className="mt-3 text-lg leading-7 text-slate-600">{recipe.description}</p>
             <div className="mt-6 grid gap-3 sm:grid-cols-3">
               {[
-                { label: 'Protein', value: '32g', icon: Flame },
                 { label: 'Time', value: recipe.time, icon: Clock3 },
-                { label: 'AI score', value: '9.2/10', icon: Sparkles },
+                { label: 'Difficulty', value: recipe.difficulty, icon: Gauge },
+                { label: 'Steps', value: String(recipe.instructions.length), icon: ListChecks },
               ].map((item) => {
                 const Icon = item.icon;
                 return (
@@ -123,15 +166,8 @@ export default function RecipePage() {
               <h2 className="text-xl font-semibold text-slate-900">Helpful notes</h2>
             </div>
             <p className="mt-4 text-sm leading-7 text-slate-600">
-              Use olive oil instead of butter for a lighter finish, stir in extra greens to increase fiber, and keep the sauce glossy by not over-reducing it.
+              General tips, not specific to this dish: read the whole recipe before starting, prep all ingredients first, and season gradually as you cook.
             </p>
-            <div className="mt-6 rounded-[24px] border border-slate-200 bg-white/80 p-4">
-              <div className="flex items-center gap-2 text-slate-700">
-                <TimerReset size={16} />
-                <span className="text-sm font-medium">Suggested timer</span>
-              </div>
-              <p className="mt-2 text-lg font-semibold text-slate-900">8 min simmer • 5 min prep</p>
-            </div>
           </div>
         </section>
       </div>
